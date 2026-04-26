@@ -502,12 +502,40 @@ def section_audio():
 
         clips_text = pu.split_for_tts(raw)
 
+        total_clips = len(clips_text)
         st.session_state["audio_clips"] = []
-        progress = st.progress(0.0, text="Generating audio…")
+        progress = st.progress(0.0, text=f"Starting — {total_clips} clip(s) to generate…")
+
+        def make_sleep(clip_idx: int):
+            """Return a sleep fn that updates the progress bar during waits."""
+            def _sleep(secs: float):
+                if secs >= 5:
+                    # Show a live countdown so the user knows we're waiting
+                    elapsed = 0.0
+                    step = 2.0
+                    while elapsed < secs:
+                        wait = min(step, secs - elapsed)
+                        remaining = int(secs - elapsed)
+                        pct = (clip_idx - 1) / total_clips
+                        progress.progress(
+                            pct,
+                            text=f"Clip {clip_idx}/{total_clips} — "
+                                 f"rate limited, resuming in {remaining}s…"
+                        )
+                        time.sleep(wait)
+                        elapsed += wait
+                else:
+                    time.sleep(secs)
+            return _sleep
+
         for i, ct in enumerate(clips_text, start=1):
+            pct_before = (i - 1) / total_clips
+            progress.progress(pct_before,
+                               text=f"Generating clip {i}/{total_clips}…")
             try:
                 audio_bytes = pu.tts_clip(
-                    client, ct, voice=voice, instructions=instructions)
+                    client, ct, voice=voice, instructions=instructions,
+                    sleep=make_sleep(i))
             except pu.OpenAICallError as e:
                 progress.empty()
                 st.error(f"Clip {i} failed: {e.user_message}")
@@ -516,11 +544,11 @@ def section_audio():
                 progress.empty()
                 st.error(f"Clip {i} failed unexpectedly: {e}")
                 break
-            label = f"Clip {i} of {len(clips_text)}"
+            label = f"Clip {i} of {total_clips}"
             st.session_state["audio_clips"].append((label, audio_bytes))
-            progress.progress(i / len(clips_text),
-                              text=f"Generated {i}/{len(clips_text)} clips")
-            if i < len(clips_text):
+            progress.progress(i / total_clips,
+                              text=f"Done {i}/{total_clips} clips ✓")
+            if i < total_clips:
                 time.sleep(2)  # brief pause between clips to avoid rate-limit bursts
         progress.empty()
         if st.session_state["audio_clips"]:

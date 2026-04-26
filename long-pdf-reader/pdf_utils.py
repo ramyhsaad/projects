@@ -623,8 +623,13 @@ def split_for_tts(text: str, max_chars: int = TTS_MAX_CHARS) -> List[str]:
 
 def tts_clip(client, text: str, *, voice: str = "alloy",
              instructions: Optional[str] = None,
-             model: str = DEFAULT_TTS_MODEL) -> bytes:
-    """Generate one MP3 clip. Returns raw bytes (no temp files)."""
+             model: str = DEFAULT_TTS_MODEL,
+             sleep: Callable[[float], None] = time.sleep) -> bytes:
+    """Generate one MP3 clip. Returns raw bytes (no temp files).
+
+    Pass a custom ``sleep`` callable to receive delay notifications (e.g. to
+    update a Streamlit progress bar while waiting on rate-limit back-off).
+    """
     text = (text or "").strip()
     if not text:
         raise ValueError("Cannot generate audio for empty text.")
@@ -647,4 +652,4 @@ def tts_clip(client, text: str, *, voice: str = "alloy",
             return b"".join(resp.iter_bytes())
         raise RuntimeError("Unexpected TTS response shape from OpenAI SDK.")
 
-    return _retry(_call, what="audio generation")
+    return _retry(_call, what="audio generation", sleep=sleep)
