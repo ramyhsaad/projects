@@ -532,7 +532,7 @@ def get_pages_text(pages: Sequence[DocPage], start_page: int,
                    end_page: int) -> str:
     if start_page > end_page:
         start_page, end_page = end_page, start_page
-    parts = [f"Page {p.page_number}.\n{p.text}"
+    parts = [p.text
              for p in pages
              if start_page <= p.page_number <= end_page and p.text]
     return "\n\n".join(parts)
