@@ -520,6 +520,8 @@ def section_audio():
             st.session_state["audio_clips"].append((label, audio_bytes))
             progress.progress(i / len(clips_text),
                               text=f"Generated {i}/{len(clips_text)} clips")
+            if i < len(clips_text):
+                time.sleep(2)  # brief pause between clips to avoid rate-limit bursts
         progress.empty()
         if st.session_state["audio_clips"]:
             st.success(

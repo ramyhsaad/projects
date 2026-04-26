@@ -44,8 +44,9 @@ MAX_RETRIEVED_CHUNKS = 12
 MAX_SUMMARY_CHUNKS = 40
 
 # Retry policy for transient OpenAI failures
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 RETRY_BASE_DELAY = 1.5  # seconds
+RATE_LIMIT_PAUSE = 65   # seconds to wait after a 429 before retrying
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +396,9 @@ def _retry(fn: Callable, *, what: str,
             ))
             if permanent or attempt == max_retries or not transient:
                 break
-            sleep(base_delay * (2 ** (attempt - 1)))
+            is_rate_limit = "rate limit" in msg or "429" in msg
+            delay = RATE_LIMIT_PAUSE if is_rate_limit else base_delay * (2 ** (attempt - 1))
+            sleep(delay)
     detail = str(last) if last else "unknown error"
     raise OpenAICallError(_classify_error_message(detail) +
                           f" (during {what})", last)
