@@ -77,31 +77,8 @@ OPENAI_API_KEY = _get_secret("OPENAI_API_KEY")
 
 
 def password_gate() -> bool:
-    """Show password prompt. Returns True if unlocked."""
-    if not APP_PASSWORD:
-        st.warning(
-            "⚠️ No `APP_PASSWORD` is configured. The app is running without "
-            "a password gate. Set `APP_PASSWORD` in your Streamlit secrets "
-            "to enable private access."
-        )
-        return True
-    if st.session_state.get("_unlocked"):
-        return True
-
-    st.title(f"📖 {APP_TITLE}")
-    st.write("This app is private. Enter the password to continue.")
-    pw = st.text_input("Password", type="password",
-                       label_visibility="collapsed",
-                       placeholder="Password",
-                       key="_pw_input")
-    if st.button("Unlock", type="primary"):
-        if pw == APP_PASSWORD:
-            st.session_state["_unlocked"] = True
-            st.rerun()
-        else:
-            time.sleep(0.6)  # mild brute-force speed bump
-            st.error("Incorrect password.")
-    return False
+    """Password gate — currently disabled for personal use."""
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -464,14 +441,15 @@ def section_audio():
         a_end = st.number_input("To page", min_value=1, max_value=n,
                                 value=default_end, step=1, key="audio_end")
 
-    voice = st.selectbox(
+    voice_label = st.selectbox(
         "Voice",
-        ["alloy", "verse", "ash", "sage", "coral", "ballad", "echo", "shimmer"],
+        list(pu.EDGE_TTS_VOICES.keys()),
         index=0,
     )
-    style_label = st.selectbox("Reading style", list(pu.VOICE_STYLES.keys()),
-                               index=0)
-    instructions = pu.VOICE_STYLES[style_label]
+    edge_voice = pu.EDGE_TTS_VOICES[voice_label]
+
+    rate_label = st.selectbox("Reading speed", list(pu.EDGE_TTS_RATES.keys()), index=0)
+    edge_rate = pu.EDGE_TTS_RATES[rate_label]
 
     span = int(a_end) - int(a_start) + 1
     if span <= 0:
@@ -484,17 +462,11 @@ def section_audio():
         gen_disabled = True
     else:
         st.caption(
-            f"Will read **{span} page(s)** aloud, split into up to "
-            f"{pu.MAX_AUDIO_CLIPS_PER_RUN} clips. Audio generation is the "
-            "slowest step (≈ 10–30 sec per clip).")
+            f"Will read **{span} page(s)** aloud using free Microsoft neural TTS "
+            f"(no API key needed). Generation is fast — typically a few seconds per clip.")
         gen_disabled = False
 
     if st.button("Generate audio", type="primary", disabled=gen_disabled):
-        client = get_openai_client()
-        if client is None:
-            st.error("OpenAI key is missing.")
-            return
-
         raw = pu.get_pages_text(extraction.pages, int(a_start), int(a_end))
         if not raw.strip():
             st.warning("The selected pages contain no extractable text.")
@@ -506,50 +478,19 @@ def section_audio():
         st.session_state["audio_clips"] = []
         progress = st.progress(0.0, text=f"Starting — {total_clips} clip(s) to generate…")
 
-        def make_sleep(clip_idx: int):
-            """Return a sleep fn that updates the progress bar during waits."""
-            def _sleep(secs: float):
-                if secs >= 5:
-                    # Show a live countdown so the user knows we're waiting
-                    elapsed = 0.0
-                    step = 2.0
-                    while elapsed < secs:
-                        wait = min(step, secs - elapsed)
-                        remaining = int(secs - elapsed)
-                        pct = (clip_idx - 1) / total_clips
-                        progress.progress(
-                            pct,
-                            text=f"Clip {clip_idx}/{total_clips} — "
-                                 f"rate limited, resuming in {remaining}s…"
-                        )
-                        time.sleep(wait)
-                        elapsed += wait
-                else:
-                    time.sleep(secs)
-            return _sleep
-
         for i, ct in enumerate(clips_text, start=1):
-            pct_before = (i - 1) / total_clips
-            progress.progress(pct_before,
-                               text=f"Generating clip {i}/{total_clips}…")
+            progress.progress((i - 1) / total_clips,
+                              text=f"Generating clip {i}/{total_clips}…")
             try:
-                audio_bytes = pu.tts_clip(
-                    client, ct, voice=voice, instructions=instructions,
-                    sleep=make_sleep(i))
-            except pu.OpenAICallError as e:
-                progress.empty()
-                st.error(f"Clip {i} failed: {e.user_message}")
-                break  # keep prior clips — partial success is fine
+                audio_bytes = pu.tts_clip_edge(ct, voice=edge_voice, rate=edge_rate)
             except Exception as e:
                 progress.empty()
-                st.error(f"Clip {i} failed unexpectedly: {e}")
+                st.error(f"Clip {i} failed: {e}")
                 break
             label = f"Clip {i} of {total_clips}"
             st.session_state["audio_clips"].append((label, audio_bytes))
             progress.progress(i / total_clips,
                               text=f"Done {i}/{total_clips} clips ✓")
-            if i < total_clips:
-                time.sleep(2)  # brief pause between clips to avoid rate-limit bursts
         progress.empty()
         if st.session_state["audio_clips"]:
             st.success(

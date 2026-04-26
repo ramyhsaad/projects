@@ -653,3 +653,60 @@ def tts_clip(client, text: str, *, voice: str = "alloy",
         raise RuntimeError("Unexpected TTS response shape from OpenAI SDK.")
 
     return _retry(_call, what="audio generation", sleep=sleep)
+
+
+# ---------------------------------------------------------------------------
+# Edge-TTS (free, no API key required)
+# ---------------------------------------------------------------------------
+
+EDGE_TTS_VOICES = {
+    "Guy (US, warm male)": "en-US-GuyNeural",
+    "Jenny (US, natural female)": "en-US-JennyNeural",
+    "Aria (US, expressive female)": "en-US-AriaNeural",
+    "Ryan (UK, calm male)": "en-GB-RyanNeural",
+    "Sonia (UK, warm female)": "en-GB-SoniaNeural",
+    "William (AU, relaxed male)": "en-AU-WilliamNeural",
+}
+
+EDGE_TTS_RATES = {
+    "Normal": "+0%",
+    "Slow (study mode)": "-15%",
+    "Very slow": "-30%",
+    "Slightly faster": "+15%",
+}
+
+
+def tts_clip_edge(text: str, voice: str = "en-US-GuyNeural",
+                  rate: str = "+0%") -> bytes:
+    """Generate MP3 audio via Microsoft Edge TTS (free, no API key).
+
+    Uses a thread-pool so the async edge-tts library works safely inside
+    Streamlit's synchronous execution context.
+    """
+    import asyncio
+    import concurrent.futures
+
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Cannot generate audio for empty text.")
+
+    async def _generate() -> bytes:
+        try:
+            import edge_tts  # lazy import — only needed for this backend
+        except ImportError as exc:
+            raise RuntimeError(
+                "edge-tts is not installed. Add 'edge-tts' to requirements.txt."
+            ) from exc
+        communicate = edge_tts.Communicate(text, voice=voice, rate=rate)
+        buf = io.BytesIO()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        data = buf.getvalue()
+        if not data:
+            raise RuntimeError("Edge TTS returned empty audio.")
+        return data
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, _generate())
+        return future.result(timeout=120)
