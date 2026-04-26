@@ -11,6 +11,7 @@ Step sequence:
 """
 from __future__ import annotations
 
+import base64
 import os
 import time
 from typing import Optional
@@ -110,7 +111,7 @@ def init_state():
         "extraction": None,         # pu.ExtractionResult
         "chunks": None,             # List[pu.TextChunk]
         "index_built": False,
-        "audio_clips": [],          # list of (label, bytes)
+        "full_audio": None,         # combined MP3 bytes for the whole selection
         "last_answer": None,        # (question, answer, retrieved)
         "last_summary": None,       # (start, end, text)
     }
@@ -474,14 +475,12 @@ def section_audio():
 
         clips_text = pu.split_for_tts(raw)
         total_clips = len(clips_text)
-        st.session_state["audio_clips"] = []
+        st.session_state["full_audio"] = None
         progress = st.progress(0.0, text=f"Generating {total_clips} clips in parallel…")
 
-        # Generate all clips concurrently — edge-tts is I/O bound so this is
-        # dramatically faster than sequential (32 clips in ~20s instead of 3+ min).
+        # Generate all clips concurrently (edge-tts is I/O bound).
         import concurrent.futures, threading
         results = [None] * total_clips
-        done_count = threading.Event()
         completed = [0]
         lock = threading.Lock()
 
@@ -505,26 +504,57 @@ def section_audio():
                     errors.append(str(exc))
 
         progress.empty()
-        for i, audio_bytes in enumerate(results):
-            if audio_bytes:
-                label = f"Clip {i + 1} of {total_clips}"
-                st.session_state["audio_clips"].append((label, audio_bytes))
-
+        # Concatenate all clips into one continuous MP3
+        good = [b for b in results if b]
+        if good:
+            combined = b"".join(good)
+            st.session_state["full_audio"] = combined
         if errors:
-            st.warning(f"{len(errors)} clip(s) failed: {errors[0]}")
-        if st.session_state["audio_clips"]:
-            st.success(f"Generated {len(st.session_state['audio_clips'])}/{total_clips} clips.")
+            st.warning(f"{len(errors)} clip(s) had errors and were skipped.")
 
-    clips = st.session_state.get("audio_clips") or []
-    for label, audio_bytes in clips:
-        st.markdown(f"**{label}**")
-        st.audio(audio_bytes, format="audio/mp3")
+    full_audio = st.session_state.get("full_audio")
+    if full_audio:
+        doc_name = st.session_state.get("doc_name", "audio")
+        safe_name = doc_name.lower().replace(" ", "_").replace("/", "_")
+        size_mb = len(full_audio) / (1024 * 1024)
+        st.success(f"Ready — {size_mb:.1f} MB · lock-screen controls enabled")
+        b64 = base64.b64encode(full_audio).decode()
+        title_js = doc_name.replace("'", "\\'")
+        player_html = f"""
+<audio id="pdfplayer" controls preload="auto"
+  style="width:100%;border-radius:8px;margin-bottom:4px">
+  <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
+</audio>
+<script>
+(function() {{
+  const a = document.getElementById('pdfplayer');
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({{
+    title: '{title_js}',
+    artist: 'Long PDF Reader',
+  }});
+  const upd = () => {{
+    if (a.duration) navigator.mediaSession.setPositionState({{
+      duration: a.duration, playbackRate: a.playbackRate, position: a.currentTime
+    }});
+  }};
+  a.addEventListener('play',  () => {{ navigator.mediaSession.playbackState = 'playing'; }});
+  a.addEventListener('pause', () => {{ navigator.mediaSession.playbackState = 'paused';  }});
+  a.addEventListener('timeupdate', upd);
+  navigator.mediaSession.setActionHandler('play',         () => a.play());
+  navigator.mediaSession.setActionHandler('pause',        () => a.pause());
+  navigator.mediaSession.setActionHandler('seekforward',  d  => a.currentTime = Math.min(a.currentTime + (d.seekOffset||30), a.duration));
+  navigator.mediaSession.setActionHandler('seekbackward', d  => a.currentTime = Math.max(a.currentTime - (d.seekOffset||30), 0));
+}})();
+</script>
+"""
+        st.components.v1.html(player_html, height=70)
         st.download_button(
-            f"Download {label}",
-            data=audio_bytes,
-            file_name=f"{label.lower().replace(' ', '_')}.mp3",
+            "⬇ Download MP3",
+            data=full_audio,
+            file_name=f"{safe_name}.mp3",
             mime="audio/mpeg",
-            key=f"dl_{label}",
+            key="dl_full",
         )
 
 
