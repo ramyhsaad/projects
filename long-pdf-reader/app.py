@@ -460,7 +460,7 @@ def section_audio():
         a_start = st.number_input("From page", min_value=1, max_value=n,
                                   value=1, step=1, key="audio_start")
     with col2:
-        default_end = min(n, int(a_start) + 2)
+        default_end = n
         a_end = st.number_input("To page", min_value=1, max_value=n,
                                 value=default_end, step=1, key="audio_end")
 
@@ -501,12 +501,6 @@ def section_audio():
             return
 
         clips_text = pu.split_for_tts(raw)
-        if len(clips_text) > pu.MAX_AUDIO_CLIPS_PER_RUN:
-            st.info(
-                f"Selection produced {len(clips_text)} clips; capping at "
-                f"{pu.MAX_AUDIO_CLIPS_PER_RUN}. Narrow the range to cover "
-                "the rest in a follow-up run.")
-            clips_text = clips_text[:pu.MAX_AUDIO_CLIPS_PER_RUN]
 
         st.session_state["audio_clips"] = []
         progress = st.progress(0.0, text="Generating audio…")
