@@ -3,6 +3,7 @@ app.py — Text to Audio
 """
 from __future__ import annotations
 import base64
+import time
 import streamlit as st
 import pdf_utils as pu
 
@@ -18,12 +19,12 @@ st.set_page_config(
 
 WAVEFORM_SVG = """
 <svg width="72" height="52" viewBox="0 0 72 52" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect x="0"  y="20" width="8" height="12" rx="4" fill="#1db954"/>
-  <rect x="12" y="10" width="8" height="32" rx="4" fill="#1db954"/>
-  <rect x="24" y="2"  width="8" height="48" rx="4" fill="#1db954"/>
-  <rect x="36" y="10" width="8" height="32" rx="4" fill="#1db954"/>
-  <rect x="48" y="16" width="8" height="20" rx="4" fill="#1db954"/>
-  <rect x="60" y="22" width="8" height="8"  rx="4" fill="#1db954"/>
+  <rect x="0"  y="20" width="8" height="12" rx="4" fill="#10b981"/>
+  <rect x="12" y="10" width="8" height="32" rx="4" fill="#10b981"/>
+  <rect x="24" y="2"  width="8" height="48" rx="4" fill="#10b981"/>
+  <rect x="36" y="10" width="8" height="32" rx="4" fill="#10b981"/>
+  <rect x="48" y="16" width="8" height="20" rx="4" fill="#10b981"/>
+  <rect x="60" y="22" width="8" height="8"  rx="4" fill="#10b981"/>
 </svg>
 """
 
@@ -32,53 +33,57 @@ st.markdown("""
 <style>
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;}
 .block-container{padding-top:0;padding-bottom:6rem;max-width:680px;}
-.stApp{background:#0f172a;}
+.stApp{background:#0d1117;}
 .app-hero{text-align:center;padding:3rem 1rem 2rem;}
 .hero-icon{display:flex;justify-content:center;margin-bottom:1rem;animation:wave-pulse 2.4s ease-in-out infinite;}
-@keyframes wave-pulse{0%,100%{filter:drop-shadow(0 0 8px rgba(29,185,84,.4));}50%{filter:drop-shadow(0 0 22px rgba(29,185,84,.85));}}
-.hero-title{font-size:2.4rem;font-weight:800;letter-spacing:-1.2px;margin:0 0 0.4rem;color:#f1f5f9;line-height:1;}
-.hero-sub{font-size:0.95rem;color:#94a3b8;margin:0;font-weight:400;}
-.section-label{font-size:0.65rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#64748b;margin:0 0 .7rem;}
-[data-testid="stFileUploadDropzone"]{border-radius:16px!important;border:2px solid rgba(29,185,84,.3)!important;padding:2rem 1.5rem!important;background:#1e293b!important;transition:border-color .2s,box-shadow .2s;}
-[data-testid="stFileUploadDropzone"]:hover{border-color:rgba(29,185,84,.65)!important;box-shadow:0 0 0 4px rgba(29,185,84,.08)!important;}
-[data-testid="stFileUploadDropzone"] p,[data-testid="stFileUploadDropzone"] span{color:#94a3b8!important;font-family:'Inter',sans-serif!important;}
-.doc-pill{display:flex;align-items:center;gap:.75rem;background:#1e293b;border:1px solid #334155;border-radius:14px;padding:.9rem 1.2rem;margin-bottom:1.5rem;}
+@keyframes wave-pulse{0%,100%{filter:drop-shadow(0 0 8px rgba(16,185,129,.4));}50%{filter:drop-shadow(0 0 22px rgba(16,185,129,.85));}}
+.hero-title{font-size:2.4rem;font-weight:800;letter-spacing:-1.2px;margin:0 0 .4rem;color:#ffffff;line-height:1;}
+.hero-sub{font-size:.95rem;color:#8b949e;margin:0;font-weight:400;}
+.section-label{font-size:.65rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8b949e;margin:0 0 .7rem;}
+[data-testid="stFileUploadDropzone"]{border-radius:16px!important;border:2px solid rgba(16,185,129,.3)!important;padding:2rem 1.5rem!important;background:#161b22!important;transition:border-color .2s,box-shadow .2s;}
+[data-testid="stFileUploadDropzone"]:hover{border-color:rgba(16,185,129,.7)!important;box-shadow:0 0 0 4px rgba(16,185,129,.08)!important;}
+[data-testid="stFileUploadDropzone"] p,[data-testid="stFileUploadDropzone"] span{color:#8b949e!important;font-family:'Inter',sans-serif!important;}
+.doc-pill{display:flex;align-items:center;gap:.75rem;background:#161b22;border:1px solid #30363d;border-radius:14px;padding:.9rem 1.2rem;margin-bottom:1.5rem;}
 .doc-icon{font-size:1.4rem;flex-shrink:0;}
-.doc-name{font-weight:600;color:#f1f5f9;flex:1;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.doc-meta{color:#64748b;font-size:.8rem;white-space:nowrap;}
-.controls-panel{background:#1e293b;border:1px solid #334155;border-radius:20px;padding:1.5rem 1.5rem 1rem;margin-bottom:1.2rem;}
-.stSelectbox div[data-baseweb="select"]{background:#0f172a!important;border-color:#334155!important;border-radius:10px!important;}
-.stSelectbox div[data-baseweb="select"]:hover{border-color:#1db954!important;}
-.stSelectbox [data-baseweb="select"]>div{color:#f1f5f9!important;font-family:'Inter',sans-serif!important;}
-.stNumberInput input{background:#0f172a!important;border-color:#334155!important;border-radius:10px!important;color:#f1f5f9!important;font-family:'Inter',sans-serif!important;}
-.stNumberInput input:focus{border-color:#1db954!important;box-shadow:0 0 0 3px rgba(29,185,84,.15)!important;}
-label[data-testid="stWidgetLabel"] p{color:#94a3b8!important;font-size:.85rem!important;font-family:'Inter',sans-serif!important;}
-.stButton>button[kind="primary"]{background:#1db954!important;border:none!important;color:#000!important;border-radius:500px!important;font-size:.95rem!important;font-weight:700!important;letter-spacing:.06em!important;padding:.8rem 2rem!important;min-height:52px!important;width:100%!important;text-transform:uppercase!important;transition:transform .1s,background .15s!important;}
-.stButton>button[kind="primary"]:hover{background:#1ed760!important;transform:scale(1.02)!important;}
-.stButton>button[kind="primary"]:active{transform:scale(.98)!important;background:#169c46!important;}
-.stButton>button[kind="secondary"]{background:#1e293b!important;border:1px solid #334155!important;color:#f1f5f9!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;transition:background .15s,border-color .15s!important;}
-.stButton>button[kind="secondary"]:hover{background:#334155!important;border-color:#f1f5f9!important;}
-.stDownloadButton>button{background:transparent!important;border:1px solid #475569!important;color:#f1f5f9!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;font-size:.9rem!important;transition:border-color .15s,background .15s!important;}
-.stDownloadButton>button:hover{border-color:#f1f5f9!important;background:rgba(241,245,249,.06)!important;}
-.player-card{background:#1e293b;border-radius:20px;padding:1.6rem 1.5rem 1.2rem;margin:.6rem 0 .9rem;border:1px solid #334155;position:relative;overflow:hidden;}
-.player-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#1db954,#1ed760,#169c46);border-radius:20px 20px 0 0;}
-.player-card::after{content:'';position:absolute;bottom:0;right:1.2rem;width:90px;height:44px;background:repeating-linear-gradient(to right,rgba(29,185,84,.15) 0px,rgba(29,185,84,.15) 3px,transparent 3px,transparent 7px);-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);}
-.player-doc{color:#f1f5f9;font-size:1.05rem;font-weight:700;margin-bottom:.2rem;letter-spacing:-.2px;}
-.player-meta{color:#64748b;font-size:.8rem;margin-bottom:1rem;display:flex;gap:.5rem;align-items:center;}
-.player-dot{color:#334155;}
-audio{width:100%;border-radius:8px;accent-color:#1db954;outline:none;}
-.stProgress>div>div>div{background:#1db954!important;border-radius:4px!important;}
-.stProgress>div>div{background:#1e293b!important;border-radius:4px!important;}
+.doc-name{font-weight:600;color:#ffffff;flex:1;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.doc-meta{color:#8b949e;font-size:.8rem;white-space:nowrap;}
+.controls-panel{background:#161b22;border:1px solid #30363d;border-radius:20px;padding:1.5rem 1.5rem 1rem;margin-bottom:1.2rem;}
+.stSelectbox div[data-baseweb="select"]{background:#0d1117!important;border-color:#30363d!important;border-radius:10px!important;}
+.stSelectbox div[data-baseweb="select"]:hover{border-color:#10b981!important;}
+.stSelectbox [data-baseweb="select"]>div{color:#ffffff!important;font-family:'Inter',sans-serif!important;}
+.stNumberInput input{background:#0d1117!important;border-color:#30363d!important;border-radius:10px!important;color:#ffffff!important;font-family:'Inter',sans-serif!important;}
+.stNumberInput input:focus{border-color:#10b981!important;box-shadow:0 0 0 3px rgba(16,185,129,.15)!important;}
+label[data-testid="stWidgetLabel"] p{color:#8b949e!important;font-size:.85rem!important;font-family:'Inter',sans-serif!important;}
+.stButton>button[kind="primary"]{background:#10b981!important;border:none!important;color:#ffffff!important;border-radius:500px!important;font-size:.95rem!important;font-weight:700!important;letter-spacing:.06em!important;padding:.8rem 2rem!important;min-height:52px!important;width:100%!important;text-transform:uppercase!important;transition:transform .1s,background .15s!important;}
+.stButton>button[kind="primary"]:hover{background:#059669!important;transform:scale(1.02)!important;}
+.stButton>button[kind="primary"]:active{transform:scale(.98)!important;background:#047857!important;}
+.stButton>button[kind="secondary"]{background:#161b22!important;border:1px solid #30363d!important;color:#ffffff!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;transition:background .15s,border-color .15s!important;}
+.stButton>button[kind="secondary"]:hover{background:#21262d!important;border-color:#ffffff!important;}
+.stDownloadButton>button{background:transparent!important;border:1px solid #30363d!important;color:#ffffff!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;font-size:.9rem!important;transition:border-color .15s,background .15s!important;}
+.stDownloadButton>button:hover{border-color:#ffffff!important;background:rgba(255,255,255,.06)!important;}
+.gen-status{background:#161b22;border:1px solid #10b981;border-radius:16px;padding:1.2rem 1.4rem;margin-bottom:.8rem;}
+.gen-status-title{color:#ffffff;font-weight:700;font-size:1rem;margin-bottom:.25rem;display:flex;align-items:center;gap:.5rem;}
+.gen-status-sub{color:#8b949e;font-size:.83rem;line-height:1.5;}
+.gen-eta{color:#10b981;font-weight:600;}
+.player-card{background:#161b22;border-radius:20px;padding:1.6rem 1.5rem 1.2rem;margin:.6rem 0 .9rem;border:1px solid #30363d;position:relative;overflow:hidden;}
+.player-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#10b981,#34d399,#059669);border-radius:20px 20px 0 0;}
+.player-card::after{content:'';position:absolute;bottom:0;right:1.2rem;width:90px;height:44px;background:repeating-linear-gradient(to right,rgba(16,185,129,.15) 0px,rgba(16,185,129,.15) 3px,transparent 3px,transparent 7px);-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);}
+.player-doc{color:#ffffff;font-size:1.05rem;font-weight:700;margin-bottom:.2rem;letter-spacing:-.2px;}
+.player-meta{color:#8b949e;font-size:.8rem;margin-bottom:1rem;display:flex;gap:.5rem;align-items:center;}
+.player-dot{color:#30363d;}
+audio{width:100%;border-radius:8px;accent-color:#10b981;outline:none;}
+.stProgress>div>div>div{background:#10b981!important;border-radius:4px!important;}
+.stProgress>div>div{background:#21262d!important;border-radius:4px!important;}
 .stAlert,.stWarning,.stError{border-radius:14px!important;}
-.stCaption{color:#475569!important;font-size:.8rem!important;text-align:center;}
-hr{border-color:#1e293b!important;}
+.stCaption{color:#8b949e!important;font-size:.8rem!important;text-align:center;}
+hr{border-color:#21262d!important;}
 footer{display:none;}
 #MainMenu{display:none;}
 header[data-testid="stHeader"]{background:transparent;}
 ::-webkit-scrollbar{width:6px;}
-::-webkit-scrollbar-track{background:#0f172a;}
-::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
-::-webkit-scrollbar-thumb:hover{background:#64748b;}
+::-webkit-scrollbar-track{background:#0d1117;}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:#8b949e;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -140,6 +145,14 @@ def section_upload():
     return extraction
 
 
+def _fmt_time(seconds: float) -> str:
+    """Format seconds into a human-readable string."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m {s:02d}s"
+
+
 def section_audio(extraction: pu.ExtractionResult):
     n = extraction.page_count
 
@@ -169,7 +182,17 @@ def section_audio(extraction: pu.ExtractionResult):
     if span > pu.MAX_AUDIO_PAGES:
         st.warning(f"Maximum is {pu.MAX_AUDIO_PAGES} pages per run.")
     elif span > 0:
-        st.caption(f"{span} page{'s' if span > 1 else ''} · free Microsoft neural TTS · no API key needed")
+        # Rough estimates to set expectations before clicking
+        words_per_page = 250
+        est_words      = span * words_per_page
+        est_audio_min  = est_words / 150          # ~150 words/min spoken
+        est_gen_sec    = max(10, span * 1.2)      # ~1.2 s per page to generate
+        if span <= 5:
+            hint = f"{span} page{'s' if span > 1 else ''} · free Microsoft neural TTS"
+        else:
+            hint = (f"{span} pages · ~{est_audio_min:.0f} min of audio · "
+                    f"est. {_fmt_time(est_gen_sec)} to generate · keep this tab open")
+        st.caption(hint)
 
     if st.button("▶  Generate Audio", type="primary", disabled=disabled, key="gen_btn"):
         raw = pu.get_pages_text(extraction.pages, int(a_start), int(a_end))
@@ -179,13 +202,49 @@ def section_audio(extraction: pu.ExtractionResult):
 
         clips   = pu.split_for_tts(raw)
         n_clips = len(clips)
+        word_count = len(raw.split())
+        est_audio_min = word_count / 150
+
         st.session_state["full_audio"] = None
 
         import concurrent.futures, threading
+
         results   = [None] * n_clips
         completed = [0]
         lock      = threading.Lock()
-        progress  = st.progress(0.0, text="Generating audio…")
+        t_start   = time.time()
+
+        # ── Prominent status card ───────────────────────────────────────────
+        status_slot = st.empty()
+        progress    = st.progress(0.0)
+        detail_slot = st.empty()
+
+        def _render_status(done: int, total: int, elapsed: float):
+            pct = done / total if total else 0
+            if done == 0:
+                eta_str = "calculating…"
+            else:
+                rate    = done / elapsed
+                remaining = (total - done) / rate
+                eta_str = f"~{_fmt_time(remaining)} remaining"
+
+            status_slot.markdown(
+                f'<div class="gen-status">'
+                f'<div class="gen-status-title">🎵 Generating audio&nbsp;&nbsp;'
+                f'<span style="color:#10b981;font-size:.85rem;">{int(pct*100)}%</span></div>'
+                f'<div class="gen-status-sub">'
+                f'Clip <strong style="color:#ffffff">{done}</strong> of '
+                f'<strong style="color:#ffffff">{total}</strong> &nbsp;·&nbsp; '
+                f'Elapsed: <strong style="color:#ffffff">{_fmt_time(elapsed)}</strong> &nbsp;·&nbsp; '
+                f'<span class="gen-eta">{eta_str}</span><br>'
+                f'<span style="color:#30363d;font-size:.75rem;margin-top:.25rem;display:block;">'
+                f'⚠ Keep this tab open — closing will stop generation</span>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        _render_status(0, n_clips, 0.001)
+
         edge_voice = pu.EDGE_TTS_VOICES[voice_label]
         edge_rate  = pu.EDGE_TTS_RATES[rate_label]
 
@@ -194,8 +253,9 @@ def section_audio(extraction: pu.ExtractionResult):
             with lock:
                 results[idx] = audio
                 completed[0] += 1
-                progress.progress(completed[0] / n_clips,
-                                  text=f"Generating clip {completed[0]} of {n_clips}…")
+                elapsed = time.time() - t_start
+                _render_status(completed[0], n_clips, elapsed)
+                progress.progress(completed[0] / n_clips)
 
         errors = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
@@ -204,10 +264,25 @@ def section_audio(extraction: pu.ExtractionResult):
                 if f.exception():
                     errors.append(str(f.exception()))
 
+        elapsed_total = time.time() - t_start
         progress.empty()
+        detail_slot.empty()
+
         good = [b for b in results if b]
         if good:
             st.session_state["full_audio"] = b"".join(good)
+            audio_mb = len(b"".join(good)) / (1024 * 1024)
+            status_slot.markdown(
+                f'<div class="gen-status" style="border-color:#10b981;">'
+                f'<div class="gen-status-title">✅ Done!</div>'
+                f'<div class="gen-status-sub">'
+                f'{n_clips} clips · {audio_mb:.1f} MB · generated in {_fmt_time(elapsed_total)}'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            status_slot.empty()
+
         if errors:
             st.warning(f"{len(errors)} clip(s) had errors and were skipped.")
 
@@ -223,7 +298,7 @@ def section_audio(extraction: pu.ExtractionResult):
     b64 = base64.b64encode(audio).decode()
 
     player_html = f"""
-<style>#pdfaudio{{width:100%;border-radius:8px;outline:none;accent-color:#1db954;}}</style>
+<style>#pdfaudio{{width:100%;border-radius:8px;outline:none;accent-color:#10b981;}}</style>
 <audio id="pdfaudio" controls preload="auto">
   <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
 </audio>
