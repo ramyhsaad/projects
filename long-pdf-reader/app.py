@@ -1,331 +1,92 @@
 """
-app.py — PDF Audio  (Spotify-style dark UI)
+app.py — Text to Audio
 """
 from __future__ import annotations
-
 import base64
-import os
-from typing import Optional
-
 import streamlit as st
 import pdf_utils as pu
 
-APP_TITLE    = "PDF Audio"
+APP_TITLE    = "Text to Audio"
 APP_SUBTITLE = "Turn any document into audio"
-APP_ICON     = "🎧"
 
-# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon=APP_ICON,
+    page_icon="🎵",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+WAVEFORM_SVG = """
+<svg width="72" height="52" viewBox="0 0 72 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0"  y="20" width="8" height="12" rx="4" fill="#1db954"/>
+  <rect x="12" y="10" width="8" height="32" rx="4" fill="#1db954"/>
+  <rect x="24" y="2"  width="8" height="48" rx="4" fill="#1db954"/>
+  <rect x="36" y="10" width="8" height="32" rx="4" fill="#1db954"/>
+  <rect x="48" y="16" width="8" height="20" rx="4" fill="#1db954"/>
+  <rect x="60" y="22" width="8" height="8"  rx="4" fill="#1db954"/>
+</svg>
+"""
+
 st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  /* ── Base ── */
-  html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif !important;
-  }
-  .block-container {
-    padding-top: 0;
-    padding-bottom: 6rem;
-    max-width: 680px;
-  }
-  .stApp {
-    background: #121212;
-  }
-
-  /* ── Hero ── */
-  .app-hero {
-    text-align: center;
-    padding: 3.5rem 1rem 2rem;
-  }
-  .hero-icon {
-    font-size: 4rem;
-    line-height: 1;
-    display: block;
-    margin-bottom: 0.8rem;
-    animation: pulse-glow 3s ease-in-out infinite;
-  }
-  @keyframes pulse-glow {
-    0%, 100% { filter: drop-shadow(0 0 12px rgba(29,185,84,0.45)); }
-    50%       { filter: drop-shadow(0 0 28px rgba(29,185,84,0.8)); }
-  }
-  .hero-title {
-    font-size: 2.6rem;
-    font-weight: 800;
-    letter-spacing: -1.5px;
-    margin: 0 0 0.35rem;
-    color: #ffffff;
-    line-height: 1;
-  }
-  .hero-sub {
-    font-size: 0.95rem;
-    color: #b3b3b3;
-    margin: 0;
-    font-weight: 400;
-    letter-spacing: 0.01em;
-  }
-
-  /* ── Section labels ── */
-  .section-label {
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #b3b3b3;
-    margin: 0 0 0.7rem;
-  }
-
-  /* ── Upload zone ── */
-  [data-testid="stFileUploadDropzone"] {
-    border-radius: 16px !important;
-    border: 2px solid rgba(29,185,84,0.25) !important;
-    padding: 2.2rem 1.5rem !important;
-    background: #1a1a1a !important;
-    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-  }
-  [data-testid="stFileUploadDropzone"]:hover {
-    border-color: rgba(29,185,84,0.6) !important;
-    background: #1e1e1e !important;
-    box-shadow: 0 0 0 4px rgba(29,185,84,0.07) !important;
-  }
-  [data-testid="stFileUploadDropzone"] p,
-  [data-testid="stFileUploadDropzone"] span {
-    color: #b3b3b3 !important;
-    font-family: 'Inter', sans-serif !important;
-  }
-
-  /* ── Doc pill ── */
-  .doc-pill {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: #282828;
-    border: 1px solid #3e3e3e;
-    border-radius: 14px;
-    padding: 0.9rem 1.2rem;
-    margin-bottom: 1.5rem;
-    transition: background 0.2s;
-  }
-  .doc-pill:hover { background: #323232; }
-  .doc-icon { font-size: 1.4rem; flex-shrink: 0; }
-  .doc-name {
-    font-weight: 600;
-    color: #ffffff;
-    flex: 1;
-    font-size: 0.95rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .doc-meta {
-    color: #b3b3b3;
-    font-size: 0.8rem;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* ── Controls panel ── */
-  .controls-panel {
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
-    padding: 1.5rem 1.5rem 1rem;
-    margin-bottom: 1.2rem;
-  }
-
-  /* ── Form elements ── */
-  .stSelectbox div[data-baseweb="select"] {
-    background: #282828 !important;
-    border-color: #3e3e3e !important;
-    border-radius: 10px !important;
-  }
-  .stSelectbox div[data-baseweb="select"]:hover {
-    border-color: #1db954 !important;
-  }
-  .stSelectbox [data-baseweb="select"] > div {
-    color: #ffffff !important;
-    font-family: 'Inter', sans-serif !important;
-  }
-  .stNumberInput input {
-    background: #282828 !important;
-    border-color: #3e3e3e !important;
-    border-radius: 10px !important;
-    color: #ffffff !important;
-    font-family: 'Inter', sans-serif !important;
-  }
-  .stNumberInput input:focus {
-    border-color: #1db954 !important;
-    box-shadow: 0 0 0 3px rgba(29,185,84,0.15) !important;
-  }
-  label[data-testid="stWidgetLabel"] p {
-    color: #b3b3b3 !important;
-    font-size: 0.85rem !important;
-    font-family: 'Inter', sans-serif !important;
-  }
-
-  /* ── Generate button ── */
-  .stButton > button[kind="primary"] {
-    background: #1db954 !important;
-    border: none !important;
-    color: #000000 !important;
-    border-radius: 500px !important;
-    font-size: 0.95rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.06em !important;
-    padding: 0.8rem 2rem !important;
-    min-height: 52px !important;
-    width: 100% !important;
-    text-transform: uppercase !important;
-    transition: transform 0.1s, background 0.15s !important;
-  }
-  .stButton > button[kind="primary"]:hover {
-    background: #1ed760 !important;
-    transform: scale(1.02) !important;
-  }
-  .stButton > button[kind="primary"]:active {
-    transform: scale(0.98) !important;
-    background: #169c46 !important;
-  }
-  .stButton > button[kind="secondary"] {
-    background: #282828 !important;
-    border: 1px solid #3e3e3e !important;
-    color: #ffffff !important;
-    border-radius: 500px !important;
-    font-weight: 600 !important;
-    min-height: 44px !important;
-    width: 100% !important;
-    transition: background 0.15s, border-color 0.15s !important;
-  }
-  .stButton > button[kind="secondary"]:hover {
-    background: #3e3e3e !important;
-    border-color: #ffffff !important;
-  }
-
-  /* ── Download button ── */
-  .stDownloadButton > button {
-    background: transparent !important;
-    border: 1px solid #535353 !important;
-    color: #ffffff !important;
-    border-radius: 500px !important;
-    font-weight: 600 !important;
-    min-height: 44px !important;
-    width: 100% !important;
-    font-size: 0.9rem !important;
-    transition: border-color 0.15s, background 0.15s !important;
-  }
-  .stDownloadButton > button:hover {
-    border-color: #ffffff !important;
-    background: rgba(255,255,255,0.06) !important;
-  }
-
-  /* ── Player card ── */
-  .player-card {
-    background: #282828;
-    border-radius: 20px;
-    padding: 1.6rem 1.5rem 1.2rem;
-    margin: 0.6rem 0 0.9rem;
-    border: 1px solid #3e3e3e;
-    position: relative;
-    overflow: hidden;
-  }
-  .player-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #1db954 0%, #1ed760 50%, #169c46 100%);
-    border-radius: 20px 20px 0 0;
-  }
-  .player-card::after {
-    content: '';
-    position: absolute;
-    bottom: 0; right: 1.2rem;
-    width: 90px; height: 44px;
-    background: repeating-linear-gradient(
-      to right,
-      rgba(29,185,84,0.15) 0px, rgba(29,185,84,0.15) 3px,
-      transparent 3px, transparent 7px
-    );
-    -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
-    mask-image: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
-  }
-  .player-doc {
-    color: #ffffff;
-    font-size: 1.05rem;
-    font-weight: 700;
-    margin-bottom: 0.2rem;
-    letter-spacing: -0.2px;
-  }
-  .player-meta {
-    color: #b3b3b3;
-    font-size: 0.8rem;
-    margin-bottom: 1rem;
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-  .player-dot { color: #535353; }
-
-  /* ── Audio element ── */
-  audio {
-    width: 100%;
-    border-radius: 8px;
-    accent-color: #1db954;
-    outline: none;
-  }
-
-  /* ── Progress bar ── */
-  .stProgress > div > div > div {
-    background: #1db954 !important;
-    border-radius: 4px !important;
-  }
-  .stProgress > div > div {
-    background: #282828 !important;
-    border-radius: 4px !important;
-  }
-
-  /* ── Alerts ── */
-  .stAlert, .stWarning, .stError { border-radius: 14px !important; }
-
-  /* ── Caption ── */
-  .stCaption { color: #535353 !important; font-size: 0.8rem !important; text-align: center; }
-
-  /* ── Divider ── */
-  hr { border-color: #282828 !important; }
-
-  /* ── Hide chrome ── */
-  footer { display: none; }
-  #MainMenu { display: none; }
-  header[data-testid="stHeader"] { background: transparent; }
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: #121212; }
-  ::-webkit-scrollbar-thumb { background: #535353; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #b3b3b3; }
+html,body,[class*="css"]{font-family:'Inter',sans-serif!important;}
+.block-container{padding-top:0;padding-bottom:6rem;max-width:680px;}
+.stApp{background:#0f172a;}
+.app-hero{text-align:center;padding:3rem 1rem 2rem;}
+.hero-icon{display:flex;justify-content:center;margin-bottom:1rem;animation:wave-pulse 2.4s ease-in-out infinite;}
+@keyframes wave-pulse{0%,100%{filter:drop-shadow(0 0 8px rgba(29,185,84,.4));}50%{filter:drop-shadow(0 0 22px rgba(29,185,84,.85));}}
+.hero-title{font-size:2.4rem;font-weight:800;letter-spacing:-1.2px;margin:0 0 0.4rem;color:#f1f5f9;line-height:1;}
+.hero-sub{font-size:0.95rem;color:#94a3b8;margin:0;font-weight:400;}
+.section-label{font-size:0.65rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#64748b;margin:0 0 .7rem;}
+[data-testid="stFileUploadDropzone"]{border-radius:16px!important;border:2px solid rgba(29,185,84,.3)!important;padding:2rem 1.5rem!important;background:#1e293b!important;transition:border-color .2s,box-shadow .2s;}
+[data-testid="stFileUploadDropzone"]:hover{border-color:rgba(29,185,84,.65)!important;box-shadow:0 0 0 4px rgba(29,185,84,.08)!important;}
+[data-testid="stFileUploadDropzone"] p,[data-testid="stFileUploadDropzone"] span{color:#94a3b8!important;font-family:'Inter',sans-serif!important;}
+.doc-pill{display:flex;align-items:center;gap:.75rem;background:#1e293b;border:1px solid #334155;border-radius:14px;padding:.9rem 1.2rem;margin-bottom:1.5rem;}
+.doc-icon{font-size:1.4rem;flex-shrink:0;}
+.doc-name{font-weight:600;color:#f1f5f9;flex:1;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.doc-meta{color:#64748b;font-size:.8rem;white-space:nowrap;}
+.controls-panel{background:#1e293b;border:1px solid #334155;border-radius:20px;padding:1.5rem 1.5rem 1rem;margin-bottom:1.2rem;}
+.stSelectbox div[data-baseweb="select"]{background:#0f172a!important;border-color:#334155!important;border-radius:10px!important;}
+.stSelectbox div[data-baseweb="select"]:hover{border-color:#1db954!important;}
+.stSelectbox [data-baseweb="select"]>div{color:#f1f5f9!important;font-family:'Inter',sans-serif!important;}
+.stNumberInput input{background:#0f172a!important;border-color:#334155!important;border-radius:10px!important;color:#f1f5f9!important;font-family:'Inter',sans-serif!important;}
+.stNumberInput input:focus{border-color:#1db954!important;box-shadow:0 0 0 3px rgba(29,185,84,.15)!important;}
+label[data-testid="stWidgetLabel"] p{color:#94a3b8!important;font-size:.85rem!important;font-family:'Inter',sans-serif!important;}
+.stButton>button[kind="primary"]{background:#1db954!important;border:none!important;color:#000!important;border-radius:500px!important;font-size:.95rem!important;font-weight:700!important;letter-spacing:.06em!important;padding:.8rem 2rem!important;min-height:52px!important;width:100%!important;text-transform:uppercase!important;transition:transform .1s,background .15s!important;}
+.stButton>button[kind="primary"]:hover{background:#1ed760!important;transform:scale(1.02)!important;}
+.stButton>button[kind="primary"]:active{transform:scale(.98)!important;background:#169c46!important;}
+.stButton>button[kind="secondary"]{background:#1e293b!important;border:1px solid #334155!important;color:#f1f5f9!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;transition:background .15s,border-color .15s!important;}
+.stButton>button[kind="secondary"]:hover{background:#334155!important;border-color:#f1f5f9!important;}
+.stDownloadButton>button{background:transparent!important;border:1px solid #475569!important;color:#f1f5f9!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;font-size:.9rem!important;transition:border-color .15s,background .15s!important;}
+.stDownloadButton>button:hover{border-color:#f1f5f9!important;background:rgba(241,245,249,.06)!important;}
+.player-card{background:#1e293b;border-radius:20px;padding:1.6rem 1.5rem 1.2rem;margin:.6rem 0 .9rem;border:1px solid #334155;position:relative;overflow:hidden;}
+.player-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#1db954,#1ed760,#169c46);border-radius:20px 20px 0 0;}
+.player-card::after{content:'';position:absolute;bottom:0;right:1.2rem;width:90px;height:44px;background:repeating-linear-gradient(to right,rgba(29,185,84,.15) 0px,rgba(29,185,84,.15) 3px,transparent 3px,transparent 7px);-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);mask-image:linear-gradient(to top,rgba(0,0,0,.6),transparent);}
+.player-doc{color:#f1f5f9;font-size:1.05rem;font-weight:700;margin-bottom:.2rem;letter-spacing:-.2px;}
+.player-meta{color:#64748b;font-size:.8rem;margin-bottom:1rem;display:flex;gap:.5rem;align-items:center;}
+.player-dot{color:#334155;}
+audio{width:100%;border-radius:8px;accent-color:#1db954;outline:none;}
+.stProgress>div>div>div{background:#1db954!important;border-radius:4px!important;}
+.stProgress>div>div{background:#1e293b!important;border-radius:4px!important;}
+.stAlert,.stWarning,.stError{border-radius:14px!important;}
+.stCaption{color:#475569!important;font-size:.8rem!important;text-align:center;}
+hr{border-color:#1e293b!important;}
+footer{display:none;}
+#MainMenu{display:none;}
+header[data-testid="stHeader"]{background:transparent;}
+::-webkit-scrollbar{width:6px;}
+::-webkit-scrollbar-track{background:#0f172a;}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:#64748b;}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session state ─────────────────────────────────────────────────────────────
-
 def init_state():
-    for k, v in {
-        "doc_name":    None,
-        "doc_size_mb": 0.0,
-        "extraction":  None,
-        "full_audio":  None,
-        "audio_start": 1,
-        "audio_end":   1,
-    }.items():
+    for k, v in {"doc_name": None, "doc_size_mb": 0.0, "extraction": None,
+                  "full_audio": None, "audio_start": 1, "audio_end": 1}.items():
         st.session_state.setdefault(k, v)
-
 
 def reset_state():
     for k in list(st.session_state.keys()):
@@ -333,17 +94,10 @@ def reset_state():
     init_state()
 
 
-# ── Upload section ────────────────────────────────────────────────────────────
-
 def section_upload():
     st.markdown('<div class="section-label">📄 &nbsp;Document</div>', unsafe_allow_html=True)
-
-    uploaded = st.file_uploader(
-        "Drop a PDF here",
-        type=["pdf"],
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-    )
+    uploaded = st.file_uploader("Drop a PDF here", type=["pdf"],
+                                accept_multiple_files=False, label_visibility="collapsed")
     if uploaded is None:
         return
 
@@ -379,17 +133,12 @@ def section_upload():
         f'<span class="doc-icon">📄</span>'
         f'<span class="doc-name">{name_clean}</span>'
         f'<span class="doc-meta">{extraction.page_count} pages &nbsp;·&nbsp; {size_mb:.1f} MB</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+        f'</div>', unsafe_allow_html=True)
 
     if extraction.likely_scanned:
         st.warning("This PDF appears to be image-only — minimal text extracted.")
-
     return extraction
 
-
-# ── Audio section ─────────────────────────────────────────────────────────────
 
 def section_audio(extraction: pu.ExtractionResult):
     n = extraction.page_count
@@ -406,7 +155,6 @@ def section_audio(extraction: pu.ExtractionResult):
         a_end = st.number_input("📄 To page", min_value=1, max_value=n,
                                 value=st.session_state.get("audio_end", n),
                                 step=1, key="audio_end")
-
     c3, c4 = st.columns(2)
     with c3:
         voice_label = st.selectbox("🗣 Voice", list(pu.EDGE_TTS_VOICES.keys()), key="voice")
@@ -438,7 +186,6 @@ def section_audio(extraction: pu.ExtractionResult):
         completed = [0]
         lock      = threading.Lock()
         progress  = st.progress(0.0, text="Generating audio…")
-
         edge_voice = pu.EDGE_TTS_VOICES[voice_label]
         edge_rate  = pu.EDGE_TTS_RATES[rate_label]
 
@@ -447,10 +194,8 @@ def section_audio(extraction: pu.ExtractionResult):
             with lock:
                 results[idx] = audio
                 completed[0] += 1
-                progress.progress(
-                    completed[0] / n_clips,
-                    text=f"Generating clip {completed[0]} of {n_clips}…"
-                )
+                progress.progress(completed[0] / n_clips,
+                                  text=f"Generating clip {completed[0]} of {n_clips}…")
 
         errors = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
@@ -466,7 +211,6 @@ def section_audio(extraction: pu.ExtractionResult):
         if errors:
             st.warning(f"{len(errors)} clip(s) had errors and were skipped.")
 
-    # ── Player ────────────────────────────────────────────────────────────────
     audio = st.session_state.get("full_audio")
     if not audio:
         return
@@ -476,83 +220,49 @@ def section_audio(extraction: pu.ExtractionResult):
     safe_name  = name_clean.lower().replace(" ", "_").replace("/", "_")
     size_mb    = len(audio) / (1024 * 1024)
     title_js   = name_clean.replace("'", "\\'")
-
     b64 = base64.b64encode(audio).decode()
+
     player_html = f"""
-<style>
-  #pdfaudio {{
-    width: 100%;
-    border-radius: 8px;
-    outline: none;
-    accent-color: #1db954;
-  }}
-</style>
+<style>#pdfaudio{{width:100%;border-radius:8px;outline:none;accent-color:#1db954;}}</style>
 <audio id="pdfaudio" controls preload="auto">
   <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
 </audio>
 <script>
 (function(){{
-  const a = document.getElementById('pdfaudio');
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.metadata = new MediaMetadata({{
-    title:  '{title_js}',
-    artist: 'PDF Audio',
-    album:  'Pages {int(a_start)}–{int(a_end)}',
-  }});
-  const upd = () => {{
-    if (a.duration) navigator.mediaSession.setPositionState({{
-      duration: a.duration, playbackRate: a.playbackRate, position: a.currentTime
-    }});
-  }};
-  a.addEventListener('play',       () => navigator.mediaSession.playbackState = 'playing');
-  a.addEventListener('pause',      () => navigator.mediaSession.playbackState = 'paused');
-  a.addEventListener('timeupdate', upd);
-  navigator.mediaSession.setActionHandler('play',         () => a.play());
-  navigator.mediaSession.setActionHandler('pause',        () => a.pause());
-  navigator.mediaSession.setActionHandler('seekforward',  d  => {{
-    a.currentTime = Math.min(a.currentTime + (d.seekOffset || 30), a.duration);
-  }});
-  navigator.mediaSession.setActionHandler('seekbackward', d  => {{
-    a.currentTime = Math.max(a.currentTime - (d.seekOffset || 30), 0);
-  }});
+  const a=document.getElementById('pdfaudio');
+  if(!('mediaSession' in navigator))return;
+  navigator.mediaSession.metadata=new MediaMetadata({{title:'{title_js}',artist:'Text to Audio',album:'Pages {int(a_start)}–{int(a_end)}'}});
+  const upd=()=>{{if(a.duration)navigator.mediaSession.setPositionState({{duration:a.duration,playbackRate:a.playbackRate,position:a.currentTime}});}};
+  a.addEventListener('play',()=>navigator.mediaSession.playbackState='playing');
+  a.addEventListener('pause',()=>navigator.mediaSession.playbackState='paused');
+  a.addEventListener('timeupdate',upd);
+  navigator.mediaSession.setActionHandler('play',()=>a.play());
+  navigator.mediaSession.setActionHandler('pause',()=>a.pause());
+  navigator.mediaSession.setActionHandler('seekforward',d=>{{a.currentTime=Math.min(a.currentTime+(d.seekOffset||30),a.duration);}});
+  navigator.mediaSession.setActionHandler('seekbackward',d=>{{a.currentTime=Math.max(a.currentTime-(d.seekOffset||30),0);}});
 }})();
-</script>
-"""
+</script>"""
 
     st.markdown(
         f'<div class="player-card">'
         f'<div class="player-doc">{name_clean}</div>'
-        f'<div class="player-meta">'
-        f'Pages {int(a_start)}–{int(a_end)}'
-        f'<span class="player-dot">·</span>'
-        f'{size_mb:.1f} MB'
-        f'</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+        f'<div class="player-meta">Pages {int(a_start)}–{int(a_end)}'
+        f'<span class="player-dot">·</span>{size_mb:.1f} MB</div>'
+        f'</div>', unsafe_allow_html=True)
     st.components.v1.html(player_html, height=60)
-    st.download_button(
-        "⬇  Download MP3",
-        data=audio,
-        file_name=f"{safe_name}.mp3",
-        mime="audio/mpeg",
-        key="dl_audio",
-    )
+    st.download_button("⬇  Download MP3", data=audio,
+                       file_name=f"{safe_name}.mp3", mime="audio/mpeg", key="dl_audio")
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     init_state()
 
     st.markdown(
-        '<div class="app-hero">'
-        '<span class="hero-icon">🎧</span>'
+        f'<div class="app-hero">'
+        f'<div class="hero-icon">{WAVEFORM_SVG}</div>'
         f'<h1 class="hero-title">{APP_TITLE}</h1>'
         f'<p class="hero-sub">{APP_SUBTITLE}</p>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+        f'</div>', unsafe_allow_html=True)
 
     extraction = section_upload()
     if extraction:
