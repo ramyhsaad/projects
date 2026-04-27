@@ -1,5 +1,5 @@
 """
-app.py — PDF Audio
+app.py — PDF Audio  (Spotify-style dark UI)
 """
 from __future__ import annotations
 
@@ -24,151 +24,291 @@ st.set_page_config(
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  /* ── Layout ── */
+  /* ── Base ── */
+  html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif !important;
+  }
   .block-container {
     padding-top: 0;
     padding-bottom: 6rem;
-    max-width: 660px;
+    max-width: 680px;
+  }
+  .stApp {
+    background: #121212;
   }
 
-  /* ── Hero header ── */
+  /* ── Hero ── */
   .app-hero {
     text-align: center;
-    padding: 3rem 1rem 1.8rem;
+    padding: 3.5rem 1rem 2rem;
   }
-  .app-hero .hero-icon {
-    font-size: 3.8rem;
+  .hero-icon {
+    font-size: 4rem;
     line-height: 1;
-    margin-bottom: 0.5rem;
     display: block;
+    margin-bottom: 0.8rem;
+    animation: pulse-glow 3s ease-in-out infinite;
   }
-  .app-hero .hero-title {
-    font-size: 2.4rem;
+  @keyframes pulse-glow {
+    0%, 100% { filter: drop-shadow(0 0 12px rgba(29,185,84,0.45)); }
+    50%       { filter: drop-shadow(0 0 28px rgba(29,185,84,0.8)); }
+  }
+  .hero-title {
+    font-size: 2.6rem;
     font-weight: 800;
-    letter-spacing: -1px;
-    margin: 0 0 0.3rem;
-    background: linear-gradient(135deg, #4f46e5, #818cf8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    letter-spacing: -1.5px;
+    margin: 0 0 0.35rem;
+    color: #ffffff;
+    line-height: 1;
   }
-  .app-hero .hero-sub {
-    font-size: 1rem;
-    opacity: 0.45;
+  .hero-sub {
+    font-size: 0.95rem;
+    color: #b3b3b3;
     margin: 0;
     font-weight: 400;
+    letter-spacing: 0.01em;
   }
 
   /* ── Section labels ── */
   .section-label {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    opacity: 0.38;
-    margin: 0 0 0.6rem;
+    color: #b3b3b3;
+    margin: 0 0 0.7rem;
   }
 
   /* ── Upload zone ── */
   [data-testid="stFileUploadDropzone"] {
-    border-radius: 20px !important;
-    border: 2px dashed rgba(99,102,241,0.35) !important;
-    padding: 2rem 1.5rem !important;
-    background: rgba(99,102,241,0.04) !important;
-    transition: border-color 0.2s, background 0.2s;
+    border-radius: 16px !important;
+    border: 2px solid rgba(29,185,84,0.25) !important;
+    padding: 2.2rem 1.5rem !important;
+    background: #1a1a1a !important;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
   }
   [data-testid="stFileUploadDropzone"]:hover {
-    border-color: rgba(99,102,241,0.65) !important;
-    background: rgba(99,102,241,0.08) !important;
+    border-color: rgba(29,185,84,0.6) !important;
+    background: #1e1e1e !important;
+    box-shadow: 0 0 0 4px rgba(29,185,84,0.07) !important;
+  }
+  [data-testid="stFileUploadDropzone"] p,
+  [data-testid="stFileUploadDropzone"] span {
+    color: #b3b3b3 !important;
+    font-family: 'Inter', sans-serif !important;
   }
 
-  /* ── Doc info pill ── */
+  /* ── Doc pill ── */
   .doc-pill {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    background: rgba(99,102,241,0.08);
-    border: 1px solid rgba(99,102,241,0.2);
+    gap: 0.75rem;
+    background: #282828;
+    border: 1px solid #3e3e3e;
     border-radius: 14px;
-    padding: 0.8rem 1.1rem;
-    margin-bottom: 1.4rem;
-    font-size: 0.92rem;
+    padding: 0.9rem 1.2rem;
+    margin-bottom: 1.5rem;
+    transition: background 0.2s;
   }
-  .doc-pill .doc-icon { font-size: 1.3rem; flex-shrink: 0; }
-  .doc-pill .doc-name { font-weight: 600; flex: 1; }
-  .doc-pill .doc-meta { opacity: 0.45; font-size: 0.82rem; white-space: nowrap; }
+  .doc-pill:hover { background: #323232; }
+  .doc-icon { font-size: 1.4rem; flex-shrink: 0; }
+  .doc-name {
+    font-weight: 600;
+    color: #ffffff;
+    flex: 1;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .doc-meta {
+    color: #b3b3b3;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
 
   /* ── Controls panel ── */
   .controls-panel {
-    background: rgba(128,128,128,0.05);
-    border: 1px solid rgba(128,128,128,0.11);
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
     border-radius: 20px;
-    padding: 1.4rem 1.4rem 1rem;
-    margin-bottom: 1rem;
-  }
-
-  /* ── Primary button ── */
-  .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%) !important;
-    border: none !important;
-    color: #fff !important;
-    border-radius: 14px !important;
-    font-size: 1rem !important;
-    font-weight: 600 !important;
-    padding: 0.75rem 1rem !important;
-    min-height: 48px !important;
-    box-shadow: 0 4px 18px rgba(99,102,241,0.35) !important;
-    transition: opacity 0.15s, box-shadow 0.15s !important;
-    width: 100% !important;
-  }
-  .stButton > button[kind="primary"]:hover {
-    opacity: 0.91 !important;
-    box-shadow: 0 6px 24px rgba(99,102,241,0.45) !important;
-  }
-  .stButton > button[kind="secondary"],
-  .stDownloadButton > button {
-    border-radius: 12px !important;
-    font-weight: 500 !important;
-    min-height: 44px !important;
-    width: 100% !important;
-    transition: opacity 0.15s !important;
+    padding: 1.5rem 1.5rem 1rem;
+    margin-bottom: 1.2rem;
   }
 
   /* ── Form elements ── */
-  .stSelectbox div[data-baseweb="select"],
+  .stSelectbox div[data-baseweb="select"] {
+    background: #282828 !important;
+    border-color: #3e3e3e !important;
+    border-radius: 10px !important;
+  }
+  .stSelectbox div[data-baseweb="select"]:hover {
+    border-color: #1db954 !important;
+  }
+  .stSelectbox [data-baseweb="select"] > div {
+    color: #ffffff !important;
+    font-family: 'Inter', sans-serif !important;
+  }
   .stNumberInput input {
-    border-radius: 11px !important;
+    background: #282828 !important;
+    border-color: #3e3e3e !important;
+    border-radius: 10px !important;
+    color: #ffffff !important;
+    font-family: 'Inter', sans-serif !important;
+  }
+  .stNumberInput input:focus {
+    border-color: #1db954 !important;
+    box-shadow: 0 0 0 3px rgba(29,185,84,0.15) !important;
+  }
+  label[data-testid="stWidgetLabel"] p {
+    color: #b3b3b3 !important;
+    font-size: 0.85rem !important;
+    font-family: 'Inter', sans-serif !important;
+  }
+
+  /* ── Generate button ── */
+  .stButton > button[kind="primary"] {
+    background: #1db954 !important;
+    border: none !important;
+    color: #000000 !important;
+    border-radius: 500px !important;
     font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.06em !important;
+    padding: 0.8rem 2rem !important;
+    min-height: 52px !important;
+    width: 100% !important;
+    text-transform: uppercase !important;
+    transition: transform 0.1s, background 0.15s !important;
+  }
+  .stButton > button[kind="primary"]:hover {
+    background: #1ed760 !important;
+    transform: scale(1.02) !important;
+  }
+  .stButton > button[kind="primary"]:active {
+    transform: scale(0.98) !important;
+    background: #169c46 !important;
+  }
+  .stButton > button[kind="secondary"] {
+    background: #282828 !important;
+    border: 1px solid #3e3e3e !important;
+    color: #ffffff !important;
+    border-radius: 500px !important;
+    font-weight: 600 !important;
+    min-height: 44px !important;
+    width: 100% !important;
+    transition: background 0.15s, border-color 0.15s !important;
+  }
+  .stButton > button[kind="secondary"]:hover {
+    background: #3e3e3e !important;
+    border-color: #ffffff !important;
+  }
+
+  /* ── Download button ── */
+  .stDownloadButton > button {
+    background: transparent !important;
+    border: 1px solid #535353 !important;
+    color: #ffffff !important;
+    border-radius: 500px !important;
+    font-weight: 600 !important;
+    min-height: 44px !important;
+    width: 100% !important;
+    font-size: 0.9rem !important;
+    transition: border-color 0.15s, background 0.15s !important;
+  }
+  .stDownloadButton > button:hover {
+    border-color: #ffffff !important;
+    background: rgba(255,255,255,0.06) !important;
   }
 
   /* ── Player card ── */
   .player-card {
-    background: linear-gradient(140deg, #1e1b4b 0%, #312e81 45%, #3730a3 100%);
-    border-radius: 24px;
-    padding: 1.5rem 1.4rem 1.2rem;
-    margin: 0.5rem 0 0.8rem;
-    box-shadow: 0 10px 40px rgba(67,56,202,0.35);
+    background: #282828;
+    border-radius: 20px;
+    padding: 1.6rem 1.5rem 1.2rem;
+    margin: 0.6rem 0 0.9rem;
+    border: 1px solid #3e3e3e;
+    position: relative;
+    overflow: hidden;
   }
-  .player-doc { color: #fff; font-size: 1.05rem; font-weight: 700; margin-bottom: 0.2rem; }
+  .player-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #1db954 0%, #1ed760 50%, #169c46 100%);
+    border-radius: 20px 20px 0 0;
+  }
+  .player-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; right: 1.2rem;
+    width: 90px; height: 44px;
+    background: repeating-linear-gradient(
+      to right,
+      rgba(29,185,84,0.15) 0px, rgba(29,185,84,0.15) 3px,
+      transparent 3px, transparent 7px
+    );
+    -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+    mask-image: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+  }
+  .player-doc {
+    color: #ffffff;
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+    letter-spacing: -0.2px;
+  }
   .player-meta {
-    color: rgba(255,255,255,0.5);
+    color: #b3b3b3;
     font-size: 0.8rem;
     margin-bottom: 1rem;
     display: flex;
-    gap: 0.6rem;
+    gap: 0.5rem;
     align-items: center;
   }
-  .player-dot { color: rgba(255,255,255,0.25); }
+  .player-dot { color: #535353; }
+
+  /* ── Audio element ── */
+  audio {
+    width: 100%;
+    border-radius: 8px;
+    accent-color: #1db954;
+    outline: none;
+  }
+
+  /* ── Progress bar ── */
+  .stProgress > div > div > div {
+    background: #1db954 !important;
+    border-radius: 4px !important;
+  }
+  .stProgress > div > div {
+    background: #282828 !important;
+    border-radius: 4px !important;
+  }
 
   /* ── Alerts ── */
-  .stAlert { border-radius: 14px !important; }
-  .stSuccess { border-radius: 14px !important; }
+  .stAlert, .stWarning, .stError { border-radius: 14px !important; }
 
-  /* ── Misc ── */
+  /* ── Caption ── */
+  .stCaption { color: #535353 !important; font-size: 0.8rem !important; text-align: center; }
+
+  /* ── Divider ── */
+  hr { border-color: #282828 !important; }
+
+  /* ── Hide chrome ── */
   footer { display: none; }
   #MainMenu { display: none; }
   header[data-testid="stHeader"] { background: transparent; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #121212; }
+  ::-webkit-scrollbar-thumb { background: #535353; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #b3b3b3; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -196,7 +336,7 @@ def reset_state():
 # ── Upload section ────────────────────────────────────────────────────────────
 
 def section_upload():
-    st.markdown('<div class="section-label">Upload</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">📄 &nbsp;Document</div>', unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
         "Drop a PDF here",
@@ -212,7 +352,6 @@ def section_upload():
         st.error(f"File is {size_mb:.1f} MB — limit is {pu.MAX_UPLOAD_MB} MB.")
         return
 
-    # Re-extract only if file changed
     if (st.session_state.get("doc_name") != uploaded.name
             or st.session_state.get("extraction") is None):
         reset_state()
@@ -234,13 +373,12 @@ def section_upload():
         st.error(extraction.error)
         return
 
-    # Doc info pill
     name_clean = uploaded.name.replace(".pdf", "")
     st.markdown(
         f'<div class="doc-pill">'
         f'<span class="doc-icon">📄</span>'
         f'<span class="doc-name">{name_clean}</span>'
-        f'<span class="doc-meta">{extraction.page_count} pages · {size_mb:.1f} MB</span>'
+        f'<span class="doc-meta">{extraction.page_count} pages &nbsp;·&nbsp; {size_mb:.1f} MB</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -257,25 +395,23 @@ def section_audio(extraction: pu.ExtractionResult):
     n = extraction.page_count
 
     st.markdown('<div class="controls-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Settings</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">🎚 &nbsp;Settings</div>', unsafe_allow_html=True)
 
-    # Page range
     c1, c2 = st.columns(2)
     with c1:
-        a_start = st.number_input("From page", min_value=1, max_value=n,
+        a_start = st.number_input("📄 From page", min_value=1, max_value=n,
                                   value=st.session_state.get("audio_start", 1),
                                   step=1, key="audio_start")
     with c2:
-        a_end = st.number_input("To page", min_value=1, max_value=n,
+        a_end = st.number_input("📄 To page", min_value=1, max_value=n,
                                 value=st.session_state.get("audio_end", n),
                                 step=1, key="audio_end")
 
-    # Voice + speed
     c3, c4 = st.columns(2)
     with c3:
-        voice_label = st.selectbox("Voice", list(pu.EDGE_TTS_VOICES.keys()), key="voice")
+        voice_label = st.selectbox("🗣 Voice", list(pu.EDGE_TTS_VOICES.keys()), key="voice")
     with c4:
-        rate_label = st.selectbox("Speed", list(pu.EDGE_TTS_RATES.keys()), key="rate")
+        rate_label = st.selectbox("⚡ Speed", list(pu.EDGE_TTS_RATES.keys()), key="rate")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -287,7 +423,7 @@ def section_audio(extraction: pu.ExtractionResult):
     elif span > 0:
         st.caption(f"{span} page{'s' if span > 1 else ''} · free Microsoft neural TTS · no API key needed")
 
-    if st.button("Generate audio", type="primary", disabled=disabled, key="gen_btn"):
+    if st.button("▶  Generate Audio", type="primary", disabled=disabled, key="gen_btn"):
         raw = pu.get_pages_text(extraction.pages, int(a_start), int(a_end))
         if not raw.strip():
             st.warning("No text found in the selected pages.")
@@ -301,7 +437,7 @@ def section_audio(extraction: pu.ExtractionResult):
         results   = [None] * n_clips
         completed = [0]
         lock      = threading.Lock()
-        progress  = st.progress(0.0, text=f"Generating audio…")
+        progress  = st.progress(0.0, text="Generating audio…")
 
         edge_voice = pu.EDGE_TTS_VOICES[voice_label]
         edge_rate  = pu.EDGE_TTS_RATES[rate_label]
@@ -346,10 +482,9 @@ def section_audio(extraction: pu.ExtractionResult):
 <style>
   #pdfaudio {{
     width: 100%;
-    border-radius: 10px;
+    border-radius: 8px;
     outline: none;
-    accent-color: #818cf8;
-    filter: invert(0);
+    accent-color: #1db954;
   }}
 </style>
 <audio id="pdfaudio" controls preload="auto">
