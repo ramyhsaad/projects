@@ -2,8 +2,10 @@
 app.py — Text to Audio
 """
 from __future__ import annotations
+import base64
 import time
 import streamlit as st
+import streamlit.components.v1 as components
 import pdf_utils as pu
 
 APP_TITLE    = "Text to Audio"
@@ -15,6 +17,28 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+
+# iOS PWA support
+st.markdown("""
+<script>
+(function() {
+  var tags = [
+    ['apple-mobile-web-app-capable', 'yes'],
+    ['apple-mobile-web-app-status-bar-style', 'black-translucent'],
+    ['apple-mobile-web-app-title', 'PDF Reader'],
+  ];
+  tags.forEach(function(t) {
+    var m = document.createElement('meta');
+    m.name = t[0]; m.content = t[1];
+    document.head.appendChild(m);
+  });
+  var lnk = document.createElement('link');
+  lnk.rel = 'apple-touch-icon';
+  lnk.href = 'https://projec-dmhpgvdn7sdud6xu3dls7u.streamlit.app/app/static/icon-192.png';
+  document.head.appendChild(lnk);
+})();
+</script>
+""", unsafe_allow_html=True)
 
 WAVEFORM_SVG = """
 <svg width="72" height="52" viewBox="0 0 72 52" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -154,6 +178,113 @@ def _fmt_time(seconds: float) -> str:
     return f"{m}m {s:02d}s"
 
 
+def render_audio_player(audio_bytes: bytes, title: str, meta: str):
+    b64 = base64.b64encode(audio_bytes).decode()
+    html = """<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:transparent;font-family:'Inter',system-ui,sans-serif;padding:4px}
+.p{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-radius:20px;padding:1.4rem 1.5rem 1.2rem;color:white;border:1px solid rgba(255,255,255,.07);box-shadow:0 8px 32px rgba(0,0,0,.35)}
+.tt{font-weight:700;font-size:.95rem;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.tm{font-size:.72rem;color:#64748b;margin-bottom:1rem}
+.wv{display:flex;align-items:center;justify-content:center;gap:3px;height:44px;margin-bottom:.9rem}
+.b{width:3px;border-radius:2px;background:#10b981;opacity:.65}
+.playing .b{animation:bounce var(--d,.5s) ease-in-out infinite alternate}
+.b:nth-child(1){--d:.42s;height:10px}.b:nth-child(2){--d:.61s;height:18px}
+.b:nth-child(3){--d:.51s;height:28px}.b:nth-child(4){--d:.72s;height:38px}
+.b:nth-child(5){--d:.44s;height:44px}.b:nth-child(6){--d:.58s;height:34px}
+.b:nth-child(7){--d:.66s;height:26px}.b:nth-child(8){--d:.47s;height:40px}
+.b:nth-child(9){--d:.73s;height:44px}.b:nth-child(10){--d:.53s;height:30px}
+.b:nth-child(11){--d:.45s;height:22px}.b:nth-child(12){--d:.62s;height:36px}
+.b:nth-child(13){--d:.55s;height:44px}.b:nth-child(14){--d:.70s;height:32px}
+.b:nth-child(15){--d:.43s;height:20px}.b:nth-child(16){--d:.67s;height:28px}
+.b:nth-child(17){--d:.50s;height:16px}.b:nth-child(18){--d:.59s;height:12px}
+.b:nth-child(19){--d:.46s;height:22px}.b:nth-child(20){--d:.54s;height:8px}
+@keyframes bounce{from{transform:scaleY(.25);opacity:.4}to{transform:scaleY(1);opacity:1}}
+.sr{display:flex;align-items:center;gap:10px;margin-bottom:.9rem}
+.ti{font-size:.7rem;color:#94a3b8;font-variant-numeric:tabular-nums;min-width:30px}
+.ti.r{text-align:right}
+input[type=range].sk{flex:1;height:4px;border-radius:2px;outline:none;cursor:pointer;background:linear-gradient(to right,#10b981 var(--p,0%),rgba(255,255,255,.12) var(--p,0%));-webkit-appearance:none;appearance:none}
+input[type=range].sk::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#10b981;box-shadow:0 0 8px rgba(16,185,129,.6);cursor:pointer}
+.cr{display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:.9rem}
+.btn{background:none;border:none;color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .15s,transform .1s;padding:4px}
+.btn:hover{background:rgba(255,255,255,.1)}.btn:active{transform:scale(.92)}
+.sk15{width:40px;height:40px;flex-direction:column;gap:1px;font-size:.58rem;color:#94a3b8}
+.sk15 svg{width:18px;height:18px;fill:#94a3b8}
+.sk15:hover svg{fill:white}.sk15:hover{color:white}
+.play{width:60px;height:60px;background:#10b981;font-size:1.5rem;box-shadow:0 4px 20px rgba(16,185,129,.45)}
+.play:hover{background:#059669}
+.vr{display:flex;align-items:center;gap:8px}
+.vi{font-size:.8rem;color:#475569}
+input[type=range].vl{height:3px;border-radius:2px;outline:none;cursor:pointer;width:100px;background:linear-gradient(to right,#475569 var(--p,100%),rgba(255,255,255,.1) var(--p,100%));-webkit-appearance:none;appearance:none}
+input[type=range].vl::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#64748b;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="p" id="pl">
+  <div class="tt" id="tt"></div>
+  <div class="tm" id="tm"></div>
+  <div class="wv" id="wv">
+    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
+    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
+    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
+    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
+    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
+  </div>
+  <div class="sr">
+    <span class="ti" id="cu">0:00</span>
+    <input type="range" class="sk" id="sk" min="0" max="100" value="0" step="0.1">
+    <span class="ti r" id="du">--:--</span>
+  </div>
+  <div class="cr">
+    <button class="btn sk15" onclick="skip(-15)" title="-15s">
+      <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      <span>15</span>
+    </button>
+    <button class="btn play" id="pb" onclick="tog()">&#9654;</button>
+    <button class="btn sk15" onclick="skip(15)" title="+15s">
+      <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
+      <span>15</span>
+    </button>
+  </div>
+  <div class="vr">
+    <span class="vi">&#128264;</span>
+    <input type="range" class="vl" id="vl" min="0" max="1" step="0.01" value="1">
+    <span class="vi">&#128266;</span>
+  </div>
+</div>
+<audio id="a" preload="auto" playsinline></audio>
+<script>
+const a=document.getElementById('a'),pb=document.getElementById('pb'),
+sk=document.getElementById('sk'),vl=document.getElementById('vl'),
+cu=document.getElementById('cu'),du=document.getElementById('du'),
+wv=document.getElementById('wv');
+document.getElementById('tt').textContent=_TITLE_;
+document.getElementById('tm').textContent=_META_;
+a.src='data:audio/mpeg;base64,_B64_';
+function fmt(s){if(isNaN(s))return'--:--';const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+String(sc).padStart(2,'0')}
+a.addEventListener('loadedmetadata',()=>{du.textContent=fmt(a.duration)});
+a.addEventListener('timeupdate',()=>{if(!a.duration)return;const p=(a.currentTime/a.duration)*100;sk.value=p;sk.style.setProperty('--p',p+'%');cu.textContent=fmt(a.currentTime)});
+a.addEventListener('play',()=>{pb.innerHTML='&#9646;&#9646;';wv.classList.add('playing')});
+a.addEventListener('pause',()=>{pb.innerHTML='&#9654;';wv.classList.remove('playing')});
+a.addEventListener('ended',()=>{pb.innerHTML='&#9654;';wv.classList.remove('playing');sk.value=0;sk.style.setProperty('--p','0%');cu.textContent='0:00'});
+function tog(){a.paused?a.play():a.pause()}
+function skip(s){a.currentTime=Math.max(0,Math.min(a.duration||0,a.currentTime+s))}
+sk.addEventListener('input',()=>{if(a.duration){a.currentTime=(sk.value/100)*a.duration;sk.style.setProperty('--p',sk.value+'%')}});
+vl.addEventListener('input',()=>{a.volume=vl.value;vl.style.setProperty('--p',(vl.value*100)+'%')});
+</script>
+</body>
+</html>"""
+    html = html.replace('_B64_', b64)
+    html = html.replace('_TITLE_', repr(title))
+    html = html.replace('_META_', repr(meta))
+    components.html(html, height=310)
+
+
 def section_audio(extraction: pu.ExtractionResult):
     n = extraction.page_count
 
@@ -288,15 +419,21 @@ def section_audio(extraction: pu.ExtractionResult):
     safe_name  = name_clean.lower().replace(" ", "_").replace("/", "_")
     size_mb    = len(audio) / (1024 * 1024)
 
-    st.markdown(
-        f'<div class="player-card">'
-        f'<div class="player-doc">{name_clean}</div>'
-        f'<div class="player-meta">Pages {int(a_start)}–{int(a_end)}'
-        f'<span class="player-dot">·</span>{size_mb:.1f} MB</div>'
-        f'</div>', unsafe_allow_html=True)
-
-    # Use st.audio() — handles large files safely; no base64 embedding
-    st.audio(audio, format="audio/mp3")
+    PLAYER_LIMIT_MB = 20.0
+    if size_mb < PLAYER_LIMIT_MB:
+        render_audio_player(
+            audio,
+            title=name_clean,
+            meta=f"Pages {int(a_start)}–{int(a_end)}  ·  {size_mb:.1f} MB",
+        )
+    else:
+        st.markdown(
+            f'<div style="background:#fefce8;border:1px solid #fde68a;border-radius:14px;'
+            f'padding:1rem 1.2rem;margin:.4rem 0 .8rem;color:#92400e;font-size:.88rem;">'
+            f'🎧 <strong>{size_mb:.0f} MB</strong> — too large for browser playback on mobile. '
+            f'Download below and open in your music app or Files.</div>',
+            unsafe_allow_html=True,
+        )
 
     st.download_button("⬇  Download MP3", data=audio,
                        file_name=f"{safe_name}.mp3", mime="audio/mpeg", key="dl_audio")
