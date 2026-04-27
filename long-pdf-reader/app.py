@@ -2,7 +2,6 @@
 app.py — Text to Audio
 """
 from __future__ import annotations
-import base64
 import time
 import streamlit as st
 import pdf_utils as pu
@@ -288,29 +287,6 @@ def section_audio(extraction: pu.ExtractionResult):
     name_clean = doc_name.replace(".pdf", "")
     safe_name  = name_clean.lower().replace(" ", "_").replace("/", "_")
     size_mb    = len(audio) / (1024 * 1024)
-    title_js   = name_clean.replace("'", "\\'")
-    b64 = base64.b64encode(audio).decode()
-
-    player_html = f"""
-<style>#pdfaudio{{width:100%;border-radius:8px;outline:none;accent-color:#10b981;}}</style>
-<audio id="pdfaudio" controls preload="auto">
-  <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
-</audio>
-<script>
-(function(){{
-  const a=document.getElementById('pdfaudio');
-  if(!('mediaSession' in navigator))return;
-  navigator.mediaSession.metadata=new MediaMetadata({{title:'{title_js}',artist:'Text to Audio',album:'Pages {int(a_start)}–{int(a_end)}'}});
-  const upd=()=>{{if(a.duration)navigator.mediaSession.setPositionState({{duration:a.duration,playbackRate:a.playbackRate,position:a.currentTime}});}};
-  a.addEventListener('play',()=>navigator.mediaSession.playbackState='playing');
-  a.addEventListener('pause',()=>navigator.mediaSession.playbackState='paused');
-  a.addEventListener('timeupdate',upd);
-  navigator.mediaSession.setActionHandler('play',()=>a.play());
-  navigator.mediaSession.setActionHandler('pause',()=>a.pause());
-  navigator.mediaSession.setActionHandler('seekforward',d=>{{a.currentTime=Math.min(a.currentTime+(d.seekOffset||30),a.duration);}});
-  navigator.mediaSession.setActionHandler('seekbackward',d=>{{a.currentTime=Math.max(a.currentTime-(d.seekOffset||30),0);}});
-}})();
-</script>"""
 
     st.markdown(
         f'<div class="player-card">'
@@ -318,7 +294,10 @@ def section_audio(extraction: pu.ExtractionResult):
         f'<div class="player-meta">Pages {int(a_start)}–{int(a_end)}'
         f'<span class="player-dot">·</span>{size_mb:.1f} MB</div>'
         f'</div>', unsafe_allow_html=True)
-    st.components.v1.html(player_html, height=60)
+
+    # Use st.audio() — handles large files safely; no base64 embedding
+    st.audio(audio, format="audio/mp3")
+
     st.download_button("⬇  Download MP3", data=audio,
                        file_name=f"{safe_name}.mp3", mime="audio/mpeg", key="dl_audio")
 
