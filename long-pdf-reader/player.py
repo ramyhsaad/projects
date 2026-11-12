@@ -20,7 +20,7 @@ body{font-family:Inter,-apple-system,BlinkMacSystemFont,system-ui,sans-serif;bac
 .card{background:#0f172a;border-radius:22px;padding:20px 20px 16px;border:1px solid #1e293b}
 .title{font-size:17px;font-weight:700;line-height:1.3;color:#f8fafc;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .meta{font-size:13px;color:#94a3b8;margin-top:4px}
-.bars{display:flex;align-items:flex-end;gap:2px;height:46px;margin:18px 0 6px;cursor:pointer;touch-action:none}
+.bars{display:flex;align-items:center;gap:3px;height:46px;margin:18px 0 6px;cursor:pointer;touch-action:none}
 .bars i{flex:1;background:#334155;border-radius:2px;min-height:3px}
 .bars i.on{background:#10b981}
 .bars i.now{background:#6ee7b7}
@@ -76,11 +76,16 @@ $('play').innerHTML = PLAY;
 const secs = DATA.sections;
 secs.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = s.label + ' (' + fmt(s.start) + ')'; $('sections').appendChild(o); });
 
-// One bar per section; its height follows how long the section is.
+// A waveform of time slices; played slices turn green.
 const N = secs.length;
 const lens = secs.map((s, i) => (i + 1 < N ? secs[i + 1].start : DATA.duration) - s.start);
-const maxLen = Math.max(...lens, 1);
-lens.forEach((l) => { const b = document.createElement('i'); b.style.height = (20 + 80 * Math.sqrt(l / maxLen)) + '%'; $('bars').appendChild(b); });
+const BARS = 56;
+for (let i = 0; i < BARS; i++) {
+  const b = document.createElement('i');
+  const h = 0.25 + 0.75 * Math.abs(Math.sin(i * 1.7 + 0.4) * Math.cos(i * 0.37));
+  b.style.height = Math.round(h * 100) + '%';
+  $('bars').appendChild(b);
+}
 
 let a = null, tries = 0, lastSave = 0;
 const host = window.parent && window.parent.document;
@@ -88,7 +93,8 @@ function sectionAt(t) { let i = 0; while (i + 1 < N && secs[i + 1].start <= t) i
 function draw() {
   const t = a ? a.currentTime : 0, d = DATA.duration || (a && a.duration) || 0;
   const cur = sectionAt(t);
-  [...$('bars').children].forEach((b, i) => { b.className = i < cur ? 'on' : i === cur ? 'now' : ''; });
+  const slice = d ? Math.min(BARS - 1, Math.floor((t / d) * BARS)) : -1;
+  [...$('bars').children].forEach((b, i) => { b.className = i < slice ? 'on' : i === slice ? 'now' : ''; });
   $('cur').textContent = fmt(t);
   $('left').textContent = '−' + fmt(d - t);
   $('where').textContent = secs[cur] ? secs[cur].label : '';
@@ -158,7 +164,7 @@ $('fwd').addEventListener('click', () => seek(a.currentTime + 30));
 $('speed').addEventListener('click', () => { const cur = a ? a.playbackRate : 1; const i = SPEEDS.indexOf(cur); setSpeed(SPEEDS[(i + 1) % SPEEDS.length]); });
 $('sections').addEventListener('change', (e) => seek(secs[Number(e.target.value)].start + 0.05));
 let drag = false;
-const fromX = (e) => { const r = $('bars').getBoundingClientRect(); const f = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width)); const i = Math.floor(f * N); const within = f * N - i; return secs[i].start + within * lens[i]; };
+const fromX = (e) => { const r = $('bars').getBoundingClientRect(); const f = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width)); return f * (DATA.duration || (a && a.duration) || 0); };
 $('bars').addEventListener('pointerdown', (e) => { drag = true; $('bars').setPointerCapture(e.pointerId); seek(fromX(e)); });
 $('bars').addEventListener('pointermove', (e) => { if (drag) seek(fromX(e)); });
 $('bars').addEventListener('pointerup', () => { drag = false; });

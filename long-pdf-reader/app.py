@@ -157,6 +157,12 @@ def fmt_short(seconds: float) -> str:
     return f"{s} s"
 
 
+def make_seconds(chars: int) -> float:
+    """Rough time to make the MP3: each part takes about 35 s, six at a time."""
+    parts = max(1, -(-chars // pu.PART_MAX_CHARS))
+    return 35 * -(-parts // WORKERS)
+
+
 def pages_label(a: int, b: int) -> str:
     return f"Page {a}" if a == b else f"Pages {a}–{b}"
 
@@ -294,7 +300,7 @@ def choose_settings(ex: pu.ExtractionResult):
     secs = pu.estimate_seconds(chars, PACES[pace])
     if chars:
         st.markdown(f'<p class="estimate"><b>{pages_label(a, b)}</b>: about {fmt_short(secs)} of audio. '
-                    f'Making the MP3 takes about {fmt_short(max(10, secs / 40))}.</p>', unsafe_allow_html=True)
+                    f'Making the MP3 takes about {fmt_short(make_seconds(chars))}.</p>', unsafe_allow_html=True)
     else:
         st.warning(f"{pages_label(a, b)} {'has' if a == b else 'have'} no text to read. Choose different pages.")
     clicked = st.button("Make MP3", type="primary", disabled=not chars, key="make",
