@@ -1,462 +1,404 @@
 """
-app.py — Text to Audio
+app.py: Text to Audio. Turns a PDF into an MP3 with Microsoft Edge voices.
 """
 from __future__ import annotations
-import base64
+
+import concurrent.futures
+import hashlib
+import html
+import os
+import re
+import threading
 import time
+
 import streamlit as st
-import streamlit.components.v1 as components
+
 import pdf_utils as pu
+from player import AUDIO_KEY, player_html
 
-APP_TITLE    = "Text to Audio"
-APP_SUBTITLE = "Turn any document into audio"
+APP_TITLE = "Text to Audio"
+WORKERS = 6
 
-st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon="🎵",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
+VOICES = {
+    "Guy": ("en-US-GuyNeural", "Warm male voice, American English."),
+    "Jenny": ("en-US-JennyNeural", "Natural female voice, American English."),
+    "Aria": ("en-US-AriaNeural", "Expressive female voice, American English."),
+    "Ryan": ("en-GB-RyanNeural", "Calm male voice, British English."),
+    "Sonia": ("en-GB-SoniaNeural", "Warm female voice, British English."),
+    "William": ("en-AU-WilliamNeural", "Relaxed male voice, Australian English."),
+}
+PACES = {"Very slow": "-30%", "Slow": "-15%", "Normal": "+0%", "Fast": "+15%"}
+DOC_KEYS = ("doc_id", "extraction", "doc_name", "page_from", "page_to", "title", "sample", "result")
 
-# iOS PWA support
-st.markdown("""
-<script>
-(function() {
-  var tags = [
-    ['apple-mobile-web-app-capable', 'yes'],
-    ['apple-mobile-web-app-status-bar-style', 'black-translucent'],
-    ['apple-mobile-web-app-title', 'PDF Reader'],
-  ];
-  tags.forEach(function(t) {
-    var m = document.createElement('meta');
-    m.name = t[0]; m.content = t[1];
-    document.head.appendChild(m);
-  });
-  var lnk = document.createElement('link');
-  lnk.rel = 'apple-touch-icon';
-  lnk.href = 'https://projec-dmhpgvdn7sdud6xu3dls7u.streamlit.app/app/static/icon-192.png';
-  document.head.appendChild(lnk);
-})();
-</script>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title=APP_TITLE, page_icon="🎧", layout="centered",
+                   initial_sidebar_state="collapsed")
 
-WAVEFORM_SVG = """
-<svg width="72" height="52" viewBox="0 0 72 52" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect x="0"  y="20" width="8" height="12" rx="4" fill="#10b981"/>
-  <rect x="12" y="10" width="8" height="32" rx="4" fill="#10b981"/>
-  <rect x="24" y="2"  width="8" height="48" rx="4" fill="#10b981"/>
-  <rect x="36" y="10" width="8" height="32" rx="4" fill="#10b981"/>
-  <rect x="48" y="16" width="8" height="20" rx="4" fill="#10b981"/>
-  <rect x="60" y="22" width="8" height="8"  rx="4" fill="#10b981"/>
-</svg>
-"""
+# Local testing without the network: TTA_FAKE_TTS=1 returns tones instead of speech.
+if os.environ.get("TTA_FAKE_TTS"):
+    import subprocess
 
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-html,body,[class*="css"]{font-family:'Inter',sans-serif!important;color:#0f172a!important;}
-.block-container{padding-top:0;padding-bottom:6rem;max-width:680px;}
-.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:#ffffff!important;}
-[data-testid="stHeader"]{background:#ffffff!important;}
-section[data-testid="stSidebar"]{background:#f8fafc!important;}
-.app-hero{text-align:center;padding:3rem 1rem 2rem;}
-.hero-icon{display:flex;justify-content:center;margin-bottom:1rem;animation:wave-pulse 2.4s ease-in-out infinite;}
-@keyframes wave-pulse{0%,100%{filter:drop-shadow(0 0 8px rgba(16,185,129,.4));}50%{filter:drop-shadow(0 0 22px rgba(16,185,129,.85));}}
-.hero-title{font-size:2.4rem;font-weight:800;letter-spacing:-1.2px;margin:0 0 .4rem;color:#0f172a;line-height:1;}
-.hero-sub{font-size:.95rem;color:#64748b;margin:0;font-weight:400;}
-.section-label{font-size:.65rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#94a3b8;margin:0 0 .7rem;}
-[data-testid="stFileUploadDropzone"]{border-radius:16px!important;border:2px solid rgba(16,185,129,.35)!important;padding:2rem 1.5rem!important;background:#f0fdf4!important;transition:border-color .2s,box-shadow .2s;}
-[data-testid="stFileUploadDropzone"]:hover{border-color:rgba(16,185,129,.7)!important;box-shadow:0 0 0 4px rgba(16,185,129,.08)!important;}
-[data-testid="stFileUploadDropzone"] p,[data-testid="stFileUploadDropzone"] span{color:#64748b!important;font-family:'Inter',sans-serif!important;}
-.doc-pill{display:flex;align-items:center;gap:.75rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:.9rem 1.2rem;margin-bottom:1.5rem;}
-.doc-icon{font-size:1.4rem;flex-shrink:0;}
-.doc-name{font-weight:600;color:#0f172a;flex:1;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.doc-meta{color:#94a3b8;font-size:.8rem;white-space:nowrap;}
-.controls-panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:20px;padding:1.5rem 1.5rem 1rem;margin-bottom:1.2rem;}
-.stSelectbox div[data-baseweb="select"]{background:#ffffff!important;border-color:#e2e8f0!important;border-radius:10px!important;}
-.stSelectbox div[data-baseweb="select"]:hover{border-color:#10b981!important;}
-.stSelectbox [data-baseweb="select"]>div{color:#0f172a!important;font-family:'Inter',sans-serif!important;}
-.stNumberInput input{background:#ffffff!important;border-color:#e2e8f0!important;border-radius:10px!important;color:#0f172a!important;font-family:'Inter',sans-serif!important;}
-.stNumberInput input:focus{border-color:#10b981!important;box-shadow:0 0 0 3px rgba(16,185,129,.12)!important;}
-label[data-testid="stWidgetLabel"] p{color:#64748b!important;font-size:.85rem!important;font-family:'Inter',sans-serif!important;}
-.stButton>button[kind="primary"]{background:#10b981!important;border:none!important;color:#ffffff!important;border-radius:500px!important;font-size:.95rem!important;font-weight:700!important;letter-spacing:.06em!important;padding:.8rem 2rem!important;min-height:52px!important;width:100%!important;text-transform:uppercase!important;transition:transform .1s,background .15s!important;}
-.stButton>button[kind="primary"]:hover{background:#059669!important;transform:scale(1.02)!important;}
-.stButton>button[kind="primary"]:active{transform:scale(.98)!important;background:#047857!important;}
-.stButton>button[kind="secondary"]{background:#ffffff!important;border:1px solid #e2e8f0!important;color:#0f172a!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;transition:background .15s,border-color .15s!important;}
-.stButton>button[kind="secondary"]:hover{background:#f8fafc!important;border-color:#0f172a!important;}
-.stDownloadButton>button{background:transparent!important;border:1px solid #e2e8f0!important;color:#0f172a!important;border-radius:500px!important;font-weight:600!important;min-height:44px!important;width:100%!important;font-size:.9rem!important;transition:border-color .15s,background .15s!important;}
-.stDownloadButton>button:hover{border-color:#0f172a!important;background:rgba(15,23,42,.04)!important;}
-.gen-status{background:#f0fdf4;border:1.5px solid #10b981;border-radius:16px;padding:1.2rem 1.4rem;margin-bottom:.8rem;}
-.gen-status-title{color:#0f172a;font-weight:700;font-size:1rem;margin-bottom:.3rem;}
-.gen-status-sub{color:#374151;font-size:.85rem;line-height:1.6;}
-.gen-eta{color:#059669;font-weight:600;}
-.gen-warn{color:#9ca3af;font-size:.75rem;margin-top:.3rem;}
-.player-card{background:#f0fdf4;border-radius:20px;padding:1.6rem 1.5rem 1.2rem;margin:.6rem 0 .9rem;border:1.5px solid #a7f3d0;position:relative;overflow:hidden;}
-.player-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#10b981,#34d399,#059669);border-radius:20px 20px 0 0;}
-.player-card::after{content:'';position:absolute;bottom:0;right:1.2rem;width:90px;height:44px;background:repeating-linear-gradient(to right,rgba(16,185,129,.2) 0px,rgba(16,185,129,.2) 3px,transparent 3px,transparent 7px);-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent);mask-image:linear-gradient(to top,rgba(0,0,0,.5),transparent);}
-.player-doc{color:#0f172a;font-size:1.05rem;font-weight:700;margin-bottom:.2rem;}
-.player-meta{color:#64748b;font-size:.8rem;margin-bottom:1rem;display:flex;gap:.5rem;align-items:center;}
-.player-dot{color:#cbd5e1;}
-audio{width:100%;border-radius:8px;accent-color:#10b981;outline:none;}
-.stProgress>div>div>div{background:#10b981!important;border-radius:4px!important;}
-.stProgress>div>div{background:#e2e8f0!important;border-radius:4px!important;}
-.stAlert,.stWarning,.stError{border-radius:14px!important;}
-.stCaption{color:#94a3b8!important;font-size:.8rem!important;text-align:center;}
-hr{border-color:#f1f5f9!important;}
-footer{display:none;}
-#MainMenu{display:none;}
-header[data-testid="stHeader"]{background:transparent;}
-::-webkit-scrollbar{width:6px;}
-::-webkit-scrollbar-track{background:#f8fafc;}
-::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px;}
-::-webkit-scrollbar-thumb:hover{background:#94a3b8;}
-</style>
-""", unsafe_allow_html=True)
+    def _tts(text: str, voice: str, rate: str) -> bytes:
+        secs = max(0.5, len(text) / 60)
+        return subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=330:duration={secs:.2f}",
+             "-ar", "24000", "-ac", "1", "-b:a", "48k", "-f", "mp3", "pipe:1"],
+            capture_output=True, check=True).stdout
+else:
+    def _tts(text: str, voice: str, rate: str) -> bytes:
+        return pu.tts_clip_edge_retry(text, voice, rate)
+
+# ---------------------------------------------------------------------------
+# Look and feel
+# ---------------------------------------------------------------------------
+st.markdown('<link rel="preconnect" href="https://fonts.googleapis.com">'
+            '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">',
+            unsafe_allow_html=True)
+# st.html applies a style-only block without taking up space on the page.
+st.html("""<style>
+:root{--ink:#0f172a;--ink2:#475569;--muted:#64748b;--line:#e2e8f0;--green:#10b981;--green-ink:#047857;--green-soft:#ecfdf5}
+html,body,.stApp,[class*="css"],button,input,textarea{font-family:'Inter',-apple-system,system-ui,sans-serif!important}
+.stApp{background:#fff}
+header[data-testid="stHeader"]{background:transparent;height:0}
+[data-testid="stToolbar"],footer,#MainMenu,[data-testid="stDecoration"],[data-testid="stStatusWidget"]{display:none!important}
+.block-container{max-width:640px;padding:1.4rem 1.15rem 5rem}
+[data-testid="stVerticalBlock"]{gap:.85rem}
+.st-key-tta_head{display:none}
+
+.brand{display:flex;align-items:center;gap:.7rem;margin:.2rem 0 .35rem}
+.brand svg{flex:none}
+.brand h1{font-size:1.5rem;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0;padding:0;line-height:1.1}
+.brand-sub{color:var(--ink2);font-size:.98rem;margin:0 0 .4rem}
+
+.step{display:flex;align-items:center;gap:.6rem;margin:1rem 0 0}
+.step b{flex:none;width:1.55rem;height:1.55rem;border-radius:50%;display:grid;place-items:center;font-size:.8rem;font-weight:700;color:var(--green-ink);background:var(--green-soft);border:1px solid #a7f3d0}
+.step span{font-size:1.05rem;font-weight:700;color:var(--ink)}
+.step.done b{background:var(--green);color:#fff;border-color:var(--green)}
+
+[data-testid="stFileUploaderDropzone"],[data-testid="stFileUploadDropzone"]{border-radius:16px!important;border:1.5px dashed #a7f3d0!important;background:var(--green-soft)!important;padding:1.3rem 1.1rem!important}
+[data-testid="stFileUploaderDropzoneInstructions"] span,[data-testid="stFileUploaderDropzoneInstructions"] small{color:var(--ink2)!important}
+[data-testid="stFileUploaderDropzone"] button{border-radius:999px!important;border:1px solid var(--green)!important;color:var(--green-ink)!important;background:#fff!important;font-weight:600!important}
+
+.doc{border:1px solid var(--line);border-radius:18px;padding:1rem 1.1rem 1.05rem;background:#fff}
+.doc-title{font-weight:700;font-size:1.08rem;color:var(--ink);line-height:1.3;overflow-wrap:anywhere}
+.doc-facts{color:var(--muted);font-size:.88rem;margin-top:.25rem}
+.pages{display:flex;align-items:flex-end;gap:2px;height:44px;margin-top:.85rem}
+.pages i{flex:1;border-radius:2px;background:#e2e8f0;min-height:3px}
+.pages i.in{background:var(--green)}
+.doc-note{font-size:.84rem;color:var(--muted);margin-top:.6rem}
+
+label[data-testid="stWidgetLabel"] p{font-size:.9rem!important;font-weight:600!important;color:var(--ink)!important}
+.stNumberInput input{border-radius:12px!important;font-size:1rem!important}
+[data-testid="stCaptionContainer"]{color:var(--muted)!important}
+
+.stButton>button,.stDownloadButton>button{border-radius:999px!important;min-height:3.1rem!important;font-weight:700!important;font-size:1rem!important}
+.stButton>button[kind="primary"],.stDownloadButton>button[kind="primary"]{background:var(--green)!important;border:0!important;color:#fff!important;box-shadow:0 6px 18px rgba(16,185,129,.25)}
+.stButton>button[kind="primary"]:hover,.stDownloadButton>button[kind="primary"]:hover{background:#059669!important}
+.stButton>button[kind="primary"]:disabled{background:#a7f3d0!important;box-shadow:none}
+.stButton>button[kind="secondary"]{background:#fff!important;border:1px solid var(--line)!important;color:var(--ink)!important}
+.stButton>button[kind="tertiary"]{min-height:2.4rem!important;width:auto;color:var(--green-ink)!important;font-weight:600!important;padding-left:0!important}
+
+.estimate{font-size:.92rem;color:var(--ink2);margin:.2rem 0 .1rem}
+.estimate b{color:var(--ink)}
+.work{background:var(--green-soft);border:1px solid #a7f3d0;border-radius:16px;padding:1rem 1.1rem}
+.work-title{font-weight:700;color:var(--ink)}
+.work-sub{color:var(--ink2);font-size:.9rem;margin-top:.2rem}
+.stProgress>div>div>div{background:var(--green)!important}
+.stAlert{border-radius:14px!important}
+</style>""")
 
 
-def init_state():
-    for k, v in {"doc_name": None, "doc_size_mb": 0.0, "extraction": None,
-                  "full_audio": None, "audio_start": 1, "audio_end": 1}.items():
-        st.session_state.setdefault(k, v)
 
-def reset_state():
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
-    init_state()
+def embed(src: str, height: int, fit: bool = False) -> None:
+    """Embed HTML with scripts: st.iframe on current Streamlit, components.html before it."""
+    if hasattr(st, "iframe"):
+        st.iframe(src, height="content" if fit else height)
+    else:
+        import streamlit.components.v1 as components
+        components.html(src, height=height)
 
 
-def section_upload():
-    st.markdown('<div class="section-label">📄 &nbsp;Document</div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("Drop a PDF here", type=["pdf"],
-                                accept_multiple_files=False, label_visibility="collapsed")
+# Home-screen support: name, status bar and icon for Add to Home Screen.
+_HEAD = """<script>
+(function(){try{
+  const d = window.parent.document, head = d.head;
+  if (head.querySelector('meta[name="apple-mobile-web-app-title"]')) return;
+  const add = (tag, attrs) => { const el = d.createElement(tag); Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v)); head.appendChild(el); };
+  const url = (p) => new URL(p, window.parent.location.href).href;
+  add('meta', {name: 'apple-mobile-web-app-capable', content: 'yes'});
+  add('meta', {name: 'mobile-web-app-capable', content: 'yes'});
+  add('meta', {name: 'apple-mobile-web-app-title', content: 'Text to Audio'});
+  add('meta', {name: 'apple-mobile-web-app-status-bar-style', content: 'default'});
+  add('meta', {name: 'theme-color', content: '#ffffff'});
+  add('link', {rel: 'apple-touch-icon', href: url('app/static/icon-192.png')});
+  add('link', {rel: 'manifest', href: url('app/static/manifest.json')});
+} catch (e) {}})();
+</script>"""
+with st.container(key="tta_head"):
+    embed(_HEAD, 1)
+
+WAVE = """<svg width="34" height="26" viewBox="0 0 34 26" aria-hidden="true">
+<rect x="0" y="10" width="4" height="6" rx="2" fill="#10b981"/><rect x="6" y="5" width="4" height="16" rx="2" fill="#10b981"/>
+<rect x="12" y="0" width="4" height="26" rx="2" fill="#10b981"/><rect x="18" y="5" width="4" height="16" rx="2" fill="#10b981"/>
+<rect x="24" y="8" width="4" height="10" rx="2" fill="#10b981"/><rect x="30" y="11" width="4" height="4" rx="2" fill="#10b981"/></svg>"""
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def fmt_short(seconds: float) -> str:
+    seconds = int(max(0, round(seconds)))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h} h {m} min"
+    if m:
+        return f"{m} min"
+    return f"{s} s"
+
+
+def pages_label(a: int, b: int) -> str:
+    return f"Page {a}" if a == b else f"Pages {a}–{b}"
+
+
+def step(n: int, label: str, done: bool = False) -> None:
+    st.markdown(f'<div class="step{" done" if done else ""}"><b>{"✓" if done else n}</b>'
+                f'<span>{html.escape(label)}</span></div>', unsafe_allow_html=True)
+
+
+def page_bars(chars, start: int, end: int, max_bars: int = 90) -> str:
+    """One bar per page (grouped on long documents); green = will be read."""
+    n = len(chars)
+    if not n:
+        return ""
+    buckets = min(n, max_bars)
+    groups = []
+    for b in range(buckets):
+        lo = b * n // buckets
+        hi = max(lo + 1, (b + 1) * n // buckets)
+        groups.append((sum(chars[lo:hi]), any(start <= p + 1 <= end for p in range(lo, hi))))
+    peak = max([g[0] for g in groups] + [1])
+    bars = "".join(f'<i class="{"in" if inside else ""}" style="height:{8 + 92 * (total / peak) ** 0.5:.0f}%"></i>'
+                   for total, inside in groups)
+    return f'<div class="pages" aria-hidden="true">{bars}</div>'
+
+
+def clean_title(name: str) -> str:
+    t = re.sub(r"\.pdf$", "", name, flags=re.I)
+    return re.sub(r"\s+", " ", t.replace("_", " ")).strip() or "Your document"
+
+
+def first_sentence(pages) -> str:
+    for p in pages:
+        m = re.search(r"[A-Z][^.!?]{30,170}[.!?]", pu.naturalize_for_speech(p.text or ""))
+        if m:
+            return m.group(0)
+    return "Here is how this voice sounds reading your document."
+
+
+def clear_doc() -> None:
+    for k in DOC_KEYS:
+        st.session_state.pop(k, None)
+
+
+def start_over() -> None:
+    clear_doc()
+    # A new uploader key empties the file picker.
+    st.session_state["upload_n"] = st.session_state.get("upload_n", 0) + 1
+
+
+# ---------------------------------------------------------------------------
+# Sections of the page
+# ---------------------------------------------------------------------------
+
+def header() -> None:
+    st.markdown(f'<div class="brand">{WAVE}<h1>{APP_TITLE}</h1></div>'
+                '<p class="brand-sub">Turn a PDF into an MP3 you can listen to anywhere.</p>',
+                unsafe_allow_html=True)
+
+
+def choose_document():
+    done = st.session_state.get("extraction") is not None
+    step(1, "Choose a PDF", done=done)
+    uploaded = st.file_uploader("PDF file", type=["pdf"], label_visibility="collapsed",
+                                key=f"upload_{st.session_state.get('upload_n', 0)}")
     if uploaded is None:
-        return
+        if done:
+            clear_doc()
+        return None
 
-    size_mb = uploaded.size / (1024 * 1024)
-    if size_mb > pu.MAX_UPLOAD_MB:
-        st.error(f"File is {size_mb:.1f} MB — limit is {pu.MAX_UPLOAD_MB} MB.")
-        return
+    data = uploaded.getvalue()
+    digest = hashlib.sha1(data).hexdigest()[:16]
+    if st.session_state.get("doc_id") != digest:
+        clear_doc()
+        with st.spinner("Reading the PDF…"):
+            result = pu.extract_pdf(data)
+        st.session_state.update(doc_id=digest, extraction=result, doc_name=uploaded.name,
+                                page_from=1, page_to=max(1, result.page_count))
+        st.rerun()
 
-    if (st.session_state.get("doc_name") != uploaded.name
-            or st.session_state.get("extraction") is None):
-        reset_state()
-        st.session_state["doc_name"]    = uploaded.name
-        st.session_state["doc_size_mb"] = size_mb
-        with st.status("Reading PDF…", expanded=False) as s:
-            try:
-                result = pu.extract_pdf(uploaded.getvalue())
-            except Exception as e:
-                s.update(label="Failed", state="error")
-                st.error(str(e))
-                return
-            st.session_state["extraction"] = result
-            st.session_state["audio_end"]  = result.page_count
-            s.update(label="Ready", state="complete")
-
-    extraction: pu.ExtractionResult = st.session_state["extraction"]
-    if extraction.error:
-        st.error(extraction.error)
-        return
-
-    name_clean = uploaded.name.replace(".pdf", "")
-    st.markdown(
-        f'<div class="doc-pill">'
-        f'<span class="doc-icon">📄</span>'
-        f'<span class="doc-name">{name_clean}</span>'
-        f'<span class="doc-meta">{extraction.page_count} pages &nbsp;·&nbsp; {size_mb:.1f} MB</span>'
-        f'</div>', unsafe_allow_html=True)
-
-    if extraction.likely_scanned:
-        st.warning("This PDF appears to be image-only — minimal text extracted.")
-    return extraction
+    ex: pu.ExtractionResult = st.session_state["extraction"]
+    if ex.error:
+        st.error(ex.error)
+        return None
+    return ex
 
 
-def _fmt_time(seconds: float) -> str:
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    m, s = divmod(int(seconds), 60)
-    return f"{m}m {s:02d}s"
+def doc_card(ex: pu.ExtractionResult) -> None:
+    title = ex.title or clean_title(st.session_state["doc_name"])
+    st.session_state["title"] = title
+    chars = [len(p.text) for p in ex.pages]
+    a, b = sorted((int(st.session_state["page_from"]), int(st.session_state["page_to"])))
+    total = pu.estimate_seconds(sum(chars))
+    facts = f'{ex.page_count} {"page" if ex.page_count == 1 else "pages"}, about {fmt_short(total)} of audio in all'
+    note = ""
+    if ex.removed_lines:
+        note = (f'<div class="doc-note">Skips {ex.removed_lines} repeated headers, footers and page numbers '
+                'so they aren’t read aloud.</div>')
+    st.markdown(f'<div class="doc"><div class="doc-title">{html.escape(title)}</div>'
+                f'<div class="doc-facts">{facts}</div>{page_bars(chars, a, b)}{note}</div>',
+                unsafe_allow_html=True)
+    if ex.likely_scanned:
+        st.warning("Most pages in this PDF are images, so there’s little text to read. "
+                   "Run it through a text recognition (OCR) app first, then upload it again.")
 
 
-def render_audio_player(audio_bytes: bytes, title: str, meta: str):
-    b64 = base64.b64encode(audio_bytes).decode()
-    html = """<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:transparent;font-family:'Inter',system-ui,sans-serif;padding:4px}
-.p{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-radius:20px;padding:1.4rem 1.5rem 1.2rem;color:white;border:1px solid rgba(255,255,255,.07);box-shadow:0 8px 32px rgba(0,0,0,.35)}
-.tt{font-weight:700;font-size:.95rem;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
-.tm{font-size:.72rem;color:#64748b;margin-bottom:1rem}
-.wv{display:flex;align-items:center;justify-content:center;gap:3px;height:44px;margin-bottom:.9rem}
-.b{width:3px;border-radius:2px;background:#10b981;opacity:.65}
-.playing .b{animation:bounce var(--d,.5s) ease-in-out infinite alternate}
-.b:nth-child(1){--d:.42s;height:10px}.b:nth-child(2){--d:.61s;height:18px}
-.b:nth-child(3){--d:.51s;height:28px}.b:nth-child(4){--d:.72s;height:38px}
-.b:nth-child(5){--d:.44s;height:44px}.b:nth-child(6){--d:.58s;height:34px}
-.b:nth-child(7){--d:.66s;height:26px}.b:nth-child(8){--d:.47s;height:40px}
-.b:nth-child(9){--d:.73s;height:44px}.b:nth-child(10){--d:.53s;height:30px}
-.b:nth-child(11){--d:.45s;height:22px}.b:nth-child(12){--d:.62s;height:36px}
-.b:nth-child(13){--d:.55s;height:44px}.b:nth-child(14){--d:.70s;height:32px}
-.b:nth-child(15){--d:.43s;height:20px}.b:nth-child(16){--d:.67s;height:28px}
-.b:nth-child(17){--d:.50s;height:16px}.b:nth-child(18){--d:.59s;height:12px}
-.b:nth-child(19){--d:.46s;height:22px}.b:nth-child(20){--d:.54s;height:8px}
-@keyframes bounce{from{transform:scaleY(.25);opacity:.4}to{transform:scaleY(1);opacity:1}}
-.sr{display:flex;align-items:center;gap:10px;margin-bottom:.9rem}
-.ti{font-size:.7rem;color:#94a3b8;font-variant-numeric:tabular-nums;min-width:30px}
-.ti.r{text-align:right}
-input[type=range].sk{flex:1;height:4px;border-radius:2px;outline:none;cursor:pointer;background:linear-gradient(to right,#10b981 var(--p,0%),rgba(255,255,255,.12) var(--p,0%));-webkit-appearance:none;appearance:none}
-input[type=range].sk::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#10b981;box-shadow:0 0 8px rgba(16,185,129,.6);cursor:pointer}
-.cr{display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:.9rem}
-.btn{background:none;border:none;color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .15s,transform .1s;padding:4px}
-.btn:hover{background:rgba(255,255,255,.1)}.btn:active{transform:scale(.92)}
-.sk15{width:40px;height:40px;flex-direction:column;gap:1px;font-size:.58rem;color:#94a3b8}
-.sk15 svg{width:18px;height:18px;fill:#94a3b8}
-.sk15:hover svg{fill:white}.sk15:hover{color:white}
-.play{width:60px;height:60px;background:#10b981;font-size:1.5rem;box-shadow:0 4px 20px rgba(16,185,129,.45)}
-.play:hover{background:#059669}
-.vr{display:flex;align-items:center;gap:8px}
-.vi{font-size:.8rem;color:#475569}
-input[type=range].vl{height:3px;border-radius:2px;outline:none;cursor:pointer;width:100px;background:linear-gradient(to right,#475569 var(--p,100%),rgba(255,255,255,.1) var(--p,100%));-webkit-appearance:none;appearance:none}
-input[type=range].vl::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#64748b;cursor:pointer}
-</style>
-</head>
-<body>
-<div class="p" id="pl">
-  <div class="tt" id="tt"></div>
-  <div class="tm" id="tm"></div>
-  <div class="wv" id="wv">
-    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
-    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
-    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
-    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
-    <div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div>
-  </div>
-  <div class="sr">
-    <span class="ti" id="cu">0:00</span>
-    <input type="range" class="sk" id="sk" min="0" max="100" value="0" step="0.1">
-    <span class="ti r" id="du">--:--</span>
-  </div>
-  <div class="cr">
-    <button class="btn sk15" onclick="skip(-15)" title="-15s">
-      <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
-      <span>15</span>
-    </button>
-    <button class="btn play" id="pb" onclick="tog()">&#9654;</button>
-    <button class="btn sk15" onclick="skip(15)" title="+15s">
-      <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/></svg>
-      <span>15</span>
-    </button>
-  </div>
-  <div class="vr">
-    <span class="vi">&#128264;</span>
-    <input type="range" class="vl" id="vl" min="0" max="1" step="0.01" value="1">
-    <span class="vi">&#128266;</span>
-  </div>
-</div>
-<audio id="a" preload="auto" playsinline></audio>
-<script>
-const a=document.getElementById('a'),pb=document.getElementById('pb'),
-sk=document.getElementById('sk'),vl=document.getElementById('vl'),
-cu=document.getElementById('cu'),du=document.getElementById('du'),
-wv=document.getElementById('wv');
-document.getElementById('tt').textContent=_TITLE_;
-document.getElementById('tm').textContent=_META_;
-a.src='data:audio/mpeg;base64,_B64_';
-function fmt(s){if(isNaN(s))return'--:--';const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+String(sc).padStart(2,'0')}
-a.addEventListener('loadedmetadata',()=>{du.textContent=fmt(a.duration)});
-a.addEventListener('timeupdate',()=>{if(!a.duration)return;const p=(a.currentTime/a.duration)*100;sk.value=p;sk.style.setProperty('--p',p+'%');cu.textContent=fmt(a.currentTime)});
-a.addEventListener('play',()=>{pb.innerHTML='&#9646;&#9646;';wv.classList.add('playing')});
-a.addEventListener('pause',()=>{pb.innerHTML='&#9654;';wv.classList.remove('playing')});
-a.addEventListener('ended',()=>{pb.innerHTML='&#9654;';wv.classList.remove('playing');sk.value=0;sk.style.setProperty('--p','0%');cu.textContent='0:00'});
-function tog(){a.paused?a.play():a.pause()}
-function skip(s){a.currentTime=Math.max(0,Math.min(a.duration||0,a.currentTime+s))}
-sk.addEventListener('input',()=>{if(a.duration){a.currentTime=(sk.value/100)*a.duration;sk.style.setProperty('--p',sk.value+'%')}});
-vl.addEventListener('input',()=>{a.volume=vl.value;vl.style.setProperty('--p',(vl.value*100)+'%')});
-</script>
-</body>
-</html>"""
-    html = html.replace('_B64_', b64)
-    html = html.replace('_TITLE_', repr(title))
-    html = html.replace('_META_', repr(meta))
-    components.html(html, height=310)
-
-
-def section_audio(extraction: pu.ExtractionResult):
-    n = extraction.page_count
-
-    st.markdown('<div class="controls-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-label">🎚 &nbsp;Settings</div>', unsafe_allow_html=True)
-
+def choose_settings(ex: pu.ExtractionResult):
+    step(2, "Pick pages and a voice")
+    n = ex.page_count
     c1, c2 = st.columns(2)
     with c1:
-        a_start = st.number_input("📄 From page", min_value=1, max_value=n,
-                                  value=st.session_state.get("audio_start", 1),
-                                  step=1, key="audio_start")
+        st.number_input("From page", min_value=1, max_value=n, step=1, key="page_from")
     with c2:
-        a_end = st.number_input("📄 To page", min_value=1, max_value=n,
-                                value=st.session_state.get("audio_end", n),
-                                step=1, key="audio_end")
-    c3, c4 = st.columns(2)
-    with c3:
-        voice_label = st.selectbox("🗣 Voice", list(pu.EDGE_TTS_VOICES.keys()), key="voice")
-    with c4:
-        rate_label = st.selectbox("⚡ Speed", list(pu.EDGE_TTS_RATES.keys()), key="rate")
+        st.number_input("To page", min_value=1, max_value=n, step=1, key="page_to")
+    a, b = sorted((int(st.session_state["page_from"]), int(st.session_state["page_to"])))
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    voice = st.pills("Voice", list(VOICES), default="Guy", key="voice", selection_mode="single") or "Guy"
+    st.caption(VOICES[voice][1])
+    if st.button(f"Hear {voice}", type="tertiary", key="sample_btn", icon=":material/play_circle:"):
+        try:
+            with st.spinner("Getting a sample…"):
+                st.session_state["sample"] = (voice, _tts(f"This is {voice}. {first_sentence(ex.pages)}",
+                                                          VOICES[voice][0], "+0%"))
+        except Exception as e:  # noqa: BLE001
+            st.session_state.pop("sample", None)
+            st.error(f"The voice sample didn’t load. Try again in a moment. ({e})")
+    sample = st.session_state.get("sample")
+    if sample and sample[0] == voice:
+        st.audio(sample[1], format="audio/mpeg", autoplay=True)
 
-    span     = int(a_end) - int(a_start) + 1
-    disabled = span <= 0 or span > pu.MAX_AUDIO_PAGES
+    pace = st.segmented_control("Reading pace", list(PACES), default="Normal", key="pace") or "Normal"
+    st.caption("You can also change the speed while listening.")
 
-    if span > pu.MAX_AUDIO_PAGES:
-        st.warning(f"Maximum is {pu.MAX_AUDIO_PAGES} pages per run.")
-    elif span > 0:
-        est_words     = span * 250
-        est_audio_min = est_words / 150
-        est_gen_sec   = max(10, span * 1.2)
-        if span <= 5:
-            hint = f"{span} page{'s' if span > 1 else ''} · free Microsoft neural TTS"
-        else:
-            hint = (f"{span} pages · ~{est_audio_min:.0f} min of audio · "
-                    f"est. {_fmt_time(est_gen_sec)} to generate · keep this tab open")
-        st.caption(hint)
+    chars = sum(len(p.text) for p in ex.pages[a - 1:b])
+    secs = pu.estimate_seconds(chars, PACES[pace])
+    if chars:
+        st.markdown(f'<p class="estimate"><b>{pages_label(a, b)}</b>: about {fmt_short(secs)} of audio. '
+                    f'Making the MP3 takes about {fmt_short(max(10, secs / 40))}.</p>', unsafe_allow_html=True)
+    else:
+        st.warning(f"{pages_label(a, b)} {'has' if a == b else 'have'} no text to read. Choose different pages.")
+    clicked = st.button("Make MP3", type="primary", disabled=not chars, key="make",
+                        icon=":material/graphic_eq:", width="stretch")
+    return clicked, a, b, voice, pace
 
-    if st.button("▶  Generate Audio", type="primary", disabled=disabled, key="gen_btn"):
-        raw = pu.get_pages_text(extraction.pages, int(a_start), int(a_end))
-        if not raw.strip():
-            st.warning("No text found in the selected pages.")
-            return
 
-        clips   = pu.split_for_tts(raw)
-        n_clips = len(clips)
-        st.session_state["full_audio"] = None
+def make_audio(ex: pu.ExtractionResult, a: int, b: int, voice: str, pace: str) -> None:
+    parts = pu.build_parts(ex.pages[a - 1:b])
+    if not parts:
+        st.warning(f"{pages_label(a, b)} {'has' if a == b else 'have'} no text to read.")
+        return
+    st.session_state.pop("result", None)
+    n = len(parts)
+    results = [None] * n
+    errors = []
+    done = [0]
+    lock = threading.Lock()
+    started = time.time()
+    status = st.empty()
+    bar = st.progress(0.0)
 
-        import concurrent.futures, threading
+    def render(k: int) -> None:
+        elapsed = time.time() - started
+        eta = "Working out how long this takes."
+        if k and elapsed > 1:
+            left = (n - k) * elapsed / k
+            eta = "Almost done." if left < 5 else f"About {fmt_short(left)} left."
+        status.markdown(
+            f'<div class="work"><div class="work-title">Making your MP3: {int(100 * k / n)}%</div>'
+            f'<div class="work-sub">Part {k} of {n}. {eta} Keep this page open until it finishes.</div></div>',
+            unsafe_allow_html=True)
 
-        results   = [None] * n_clips
-        completed = [0]
-        lock      = threading.Lock()
-        t_start   = time.time()
+    def work(i: int, text: str) -> None:
+        audio = _tts(text, VOICES[voice][0], PACES[pace])
+        with lock:
+            results[i] = audio
+            done[0] += 1
 
-        status_slot = st.empty()
-        progress    = st.progress(0.0)
+    render(0)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        futures = {pool.submit(work, i, p.text): i for i, p in enumerate(parts)}
+        for f in concurrent.futures.as_completed(futures):
+            if f.exception():
+                errors.append(futures[f])
+            render(done[0])
+            bar.progress(done[0] / n)
+    bar.empty()
+    status.empty()
 
-        def _render(done: int):
-            elapsed = time.time() - t_start
-            pct = done / n_clips if n_clips else 0
-            if done == 0 or elapsed < 1:
-                eta_str = "calculating…"
-            else:
-                rate = done / elapsed
-                remaining = (n_clips - done) / rate
-                eta_str = f"~{_fmt_time(remaining)} remaining"
-            status_slot.markdown(
-                f'<div class="gen-status">'
-                f'<div class="gen-status-title">🎵 Generating audio &nbsp;'
-                f'<span style="color:#10b981">{int(pct*100)}%</span></div>'
-                f'<div class="gen-status-sub">'
-                f'Clip <strong>{done}</strong> of <strong>{n_clips}</strong>'
-                f' &nbsp;·&nbsp; Elapsed: <strong>{_fmt_time(elapsed)}</strong>'
-                f' &nbsp;·&nbsp; <span class="gen-eta">{eta_str}</span>'
-                f'</div>'
-                f'<div class="gen-warn">⚠ Keep this tab open — closing will stop generation</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        _render(0)
-
-        edge_voice = pu.EDGE_TTS_VOICES[voice_label]
-        edge_rate  = pu.EDGE_TTS_RATES[rate_label]
-
-        # Workers only write results — NO Streamlit calls inside threads
-        def _gen(idx, text):
-            audio = pu.tts_clip_edge(text, voice=edge_voice, rate=edge_rate)
-            with lock:
-                results[idx] = audio
-                completed[0] += 1
-
-        errors = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-            futs = {ex.submit(_gen, i, c): i for i, c in enumerate(clips)}
-            # Update UI from the main thread as each future completes
-            for f in concurrent.futures.as_completed(futs):
-                if f.exception():
-                    errors.append(str(f.exception()))
-                _render(completed[0])
-                progress.progress(completed[0] / n_clips)
-
-        elapsed_total = time.time() - t_start
-        progress.empty()
-
-        good = [b for b in results if b]
-        if good:
-            st.session_state["full_audio"] = b"".join(good)
-            audio_mb = len(st.session_state["full_audio"]) / (1024 * 1024)
-            status_slot.markdown(
-                f'<div class="gen-status">'
-                f'<div class="gen-status-title">✅ Done!</div>'
-                f'<div class="gen-status-sub">'
-                f'{n_clips} clips · {audio_mb:.1f} MB · {_fmt_time(elapsed_total)}'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            status_slot.empty()
-
-        if errors:
-            st.warning(f"{len(errors)} clip(s) had errors and were skipped.")
-
-    audio = st.session_state.get("full_audio")
-    if not audio:
+    if errors:
+        missing = ", ".join(pages_label(parts[i].page_start, parts[i].page_end) for i in sorted(errors)[:4])
+        st.error(f"The voice service didn’t answer for {len(errors)} of {n} parts ({missing}), so no MP3 "
+                 "was made. Tap Make MP3 to try again.")
         return
 
-    doc_name   = st.session_state.get("doc_name", "audio")
-    name_clean = doc_name.replace(".pdf", "")
-    safe_name  = name_clean.lower().replace(" ", "_").replace("/", "_")
-    size_mb    = len(audio) / (1024 * 1024)
-
-    PLAYER_LIMIT_MB = 20.0
-    if size_mb < PLAYER_LIMIT_MB:
-        render_audio_player(
-            audio,
-            title=name_clean,
-            meta=f"Pages {int(a_start)}–{int(a_end)}  ·  {size_mb:.1f} MB",
-        )
-    else:
-        st.markdown(
-            f'<div style="background:#fefce8;border:1px solid #fde68a;border-radius:14px;'
-            f'padding:1rem 1.2rem;margin:.4rem 0 .8rem;color:#92400e;font-size:.88rem;">'
-            f'🎧 <strong>{size_mb:.0f} MB</strong> — too large for browser playback on mobile. '
-            f'Download below and open in your music app or Files.</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.download_button("⬇  Download MP3", data=audio,
-                       file_name=f"{safe_name}.mp3", mime="audio/mpeg", key="dl_audio")
+    sections, t = [], 0.0
+    for p, audio in zip(parts, results):
+        sections.append((pages_label(p.page_start, p.page_end), t))
+        t += pu.mp3_duration(audio)
+    st.session_state["result"] = {
+        "audio": b"".join(results),
+        "sections": sections,
+        "duration": t,
+        "pages": (a, b),
+        "voice": voice,
+        "id": f'{st.session_state["doc_id"]}-{a}-{b}-{voice}-{pace}',
+    }
 
 
-def main():
-    init_state()
+def listen() -> None:
+    r = st.session_state.get("result")
+    if not r:
+        return
+    title = st.session_state.get("title", "Audio")
+    a, b = r["pages"]
+    step(3, "Listen or download")
+    meta = f"{pages_label(a, b)}, read by {r['voice']}, {fmt_short(r['duration'])}"
+    embed(player_html(doc_id=r["id"], title=title, meta=meta,
+                      sections=r["sections"], duration=r["duration"]), 336, fit=True)
+    with st.container(key=AUDIO_KEY):
+        st.audio(r["audio"], format="audio/mpeg")
+    safe = re.sub(r"[^\w\- ]+", "", title).strip().replace(" ", "_")[:80] or "audio"
+    st.download_button(f"Download MP3 ({len(r['audio']) / 1048576:.1f} MB)", data=r["audio"],
+                       file_name=f"{safe}.mp3", mime="audio/mpeg", type="primary",
+                       icon=":material/download:", key="download", on_click="ignore",
+                       width="stretch")
+    st.caption("On iPhone, the MP3 is saved to Downloads in the Files app.")
 
-    st.markdown(
-        f'<div class="app-hero">'
-        f'<div class="hero-icon">{WAVEFORM_SVG}</div>'
-        f'<h1 class="hero-title">{APP_TITLE}</h1>'
-        f'<p class="hero-sub">{APP_SUBTITLE}</p>'
-        f'</div>', unsafe_allow_html=True)
 
-    extraction = section_upload()
-    if extraction:
-        section_audio(extraction)
-        st.divider()
-        if st.button("Start over", type="secondary"):
-            reset_state()
+def main() -> None:
+    header()
+    ex = choose_document()
+    if not ex:
+        return
+    doc_card(ex)
+    clicked, a, b, voice, pace = choose_settings(ex)
+    if clicked:
+        make_audio(ex, a, b, voice, pace)
+    listen()
+    if st.session_state.get("result"):
+        if st.button("Start over with another PDF", type="secondary", key="restart", width="stretch"):
+            start_over()
             st.rerun()
 
 
-if __name__ == "__main__":
-    main()
+main()

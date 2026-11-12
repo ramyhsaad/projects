@@ -82,6 +82,8 @@ class ExtractionResult:
     total_chars: int               # extracted chars across all pages
     likely_scanned: bool
     error: Optional[str] = None
+    title: str = ""                # from the PDF's metadata, when usable
+    removed_lines: int = 0         # repeated headers/footers/page numbers dropped
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +125,11 @@ def naturalize_for_speech(text: str) -> str:
     # a preceding \n so the second \n of a \n\n pair is left alone.
     text = re.sub(r"(?<![.!?:;\n])\n(?!\n)", " ", text)
     text = re.sub(r"\n{2,}", "\n\n", text)
+    # Citation markers like [12] or [3–5] and raw links don't read well aloud.
+    text = re.sub(r"\[\d+(?:\s*[-–,]\s*\d+)*\]", "", text)
+    text = re.sub(r"\bhttps?://\S+|\bwww\.\S+", "link", text, flags=re.I)
     text = _HSPACE_RE.sub(" ", text)
+    text = re.sub(r" +([,.;:!?])", r"\1", text)
     return text.strip()
 
 
@@ -181,30 +187,105 @@ def extract_pdf(data: bytes) -> ExtractionResult:
                                     likely_scanned=False,
                                     error="The PDF contains no pages.")
 
-        pages: List[DocPage] = []
-        total_chars = 0
+        # Read each page as blocks (roughly paragraphs) so paragraph breaks
+        # survive and repeated headers/footers can be recognized.
+        page_blocks: List[List[str]] = []
         for i in range(page_count):
-            raw = ""
+            blocks: List[str] = []
             try:
-                raw = pdf.load_page(i).get_text("text") or ""
+                for b in pdf.load_page(i).get_text("blocks", sort=True):
+                    if len(b) >= 7 and b[6] != 0:
+                        continue  # image block
+                    t = clean_text(b[4] if len(b) > 4 else "")
+                    if t:
+                        blocks.append(t)
             except Exception:
                 # Don't let one bad page kill the whole extraction.
-                raw = ""
-            cleaned = clean_text(raw)
-            # Always append a DocPage so page numbering is preserved even
-            # for image-only / blank pages.
-            pages.append(DocPage(page_number=i + 1, text=cleaned))
-            total_chars += len(cleaned)
+                blocks = []
+            # Always keep a slot so page numbering is preserved even for
+            # image-only / blank pages.
+            page_blocks.append(blocks)
+        title = ""
+        try:
+            title = ((pdf.metadata or {}).get("title") or "").strip()
+        except Exception:
+            title = ""
     finally:
         try:
             pdf.close()
         except Exception:
             pass
 
+    page_blocks, removed = strip_running_lines(page_blocks)
+    pages: List[DocPage] = []
+    total_chars = 0
+    for i, blocks in enumerate(page_blocks):
+        text = clean_text("\n\n".join(blocks))
+        pages.append(DocPage(page_number=i + 1, text=text))
+        total_chars += len(text)
+
     likely_scanned = is_likely_scanned(pages, total_chars)
     return ExtractionResult(pages=pages, page_count=page_count,
                             total_chars=total_chars,
-                            likely_scanned=likely_scanned)
+                            likely_scanned=likely_scanned,
+                            title=title if _good_title(title) else "",
+                            removed_lines=removed)
+
+
+def _good_title(title: str) -> bool:
+    t = (title or "").strip()
+    return len(t) > 2 and not re.match(r"^(untitled|microsoft word|document\d*)", t, re.I)
+
+
+# ---------------------------------------------------------------------------
+# Running headers and footers
+# ---------------------------------------------------------------------------
+
+_EDGE_BLOCKS = 2
+_PAGE_NUMBER_RE = re.compile(r"^(page\s*)?[\divxlc]{1,7}(\s*(of|/)\s*\d{1,5})?$", re.I)
+
+
+def _edge_key(text: str) -> str:
+    return re.sub(r"[^a-z#]+", " ", re.sub(r"\d+", "#", text.lower())).strip()
+
+
+def strip_running_lines(pages: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int]:
+    """Drop headers, footers and page numbers that repeat across pages.
+
+    `pages` holds the text blocks of each page in reading order. Only the
+    first and last blocks of a page are candidates, and only short ones
+    that recur on at least 30% of pages (and 3 or more), so body text
+    stays. Returns (pages without those blocks, number of blocks removed).
+    """
+    def edges(blocks: Sequence[str]) -> List[int]:
+        idx = list(range(min(_EDGE_BLOCKS, len(blocks))))
+        for i in range(max(0, len(blocks) - _EDGE_BLOCKS), len(blocks)):
+            if i not in idx:
+                idx.append(i)
+        return idx
+
+    counts: dict = {}
+    for blocks in pages:
+        seen = set()
+        for i in edges(blocks):
+            key = _edge_key(blocks[i])
+            if key and key != "#" and key not in seen:
+                seen.add(key)
+                counts[key] = counts.get(key, 0) + 1
+
+    threshold = max(3, math.ceil(len(pages) * 0.3))
+    out: List[List[str]] = []
+    removed = 0
+    for blocks in pages:
+        drop = set()
+        for i in edges(blocks):
+            text = blocks[i].strip()
+            key = _edge_key(text)
+            if _PAGE_NUMBER_RE.match(text) or (key and counts.get(key, 0) >= threshold and len(text) < 100):
+                drop.add(i)
+        removed += len(drop)
+        out.append([b for i, b in enumerate(blocks) if i not in drop])
+    return out, removed
 
 
 def is_likely_scanned(pages: Sequence[DocPage],
@@ -710,3 +791,150 @@ def tts_clip_edge(text: str, voice: str = "en-US-GuyNeural",
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(asyncio.run, _generate())
         return future.result(timeout=120)
+
+
+# ---------------------------------------------------------------------------
+# Narration: page-aware parts and audio length
+# ---------------------------------------------------------------------------
+
+# Edge-TTS handles long input, but ~3,800-character parts keep each request
+# quick, let parts run in parallel, and give useful section markers.
+PART_MAX_CHARS = 3800
+# Typical narration pace at normal speed: about 15 characters a second.
+CHARS_PER_SECOND = 15.0
+
+_ENDS_THOUGHT_RE = re.compile(r"[.!?:;\"”’)\]]$")
+_SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]+[\"”’)\]]*|$)\s*")
+
+
+@dataclass
+class AudioPart:
+    """One request's worth of text, with the pages it covers."""
+    text: str
+    page_start: int
+    page_end: int
+
+
+def build_parts(pages: Sequence[DocPage],
+                max_chars: int = PART_MAX_CHARS) -> List[AudioPart]:
+    """Split pages into speakable parts no longer than `max_chars`.
+
+    Paragraphs stay whole when they fit; a sentence that runs over a page
+    turn stays in one paragraph; oversized paragraphs split by sentence,
+    and oversized sentences by words. Every word is kept, in order.
+    """
+    # 1. Paragraphs with the pages they touch.
+    paras: List[List] = []  # [text, first_page, last_page]
+    for page in pages:
+        body = naturalize_for_speech(page.text or "")
+        if not body:
+            continue
+        for i, p in enumerate(x.strip() for x in re.split(r"\n\n+", body)):
+            if not p:
+                continue
+            if i == 0 and paras and not _ENDS_THOUGHT_RE.search(paras[-1][0]):
+                paras[-1][0] += " " + p
+                paras[-1][2] = page.page_number
+            else:
+                paras.append([p, page.page_number, page.page_number])
+
+    # 2. Pieces no larger than max_chars.
+    pieces: List[Tuple[str, int, int, bool]] = []  # text, first, last, whole paragraph
+    for text, first, last in paras:
+        if len(text) <= max_chars:
+            pieces.append((text, first, last, True))
+            continue
+        cur = ""
+        for m in _SENTENCE_RE.finditer(text):
+            sent = m.group(0)
+            if not sent:
+                continue
+            if len(cur) + len(sent) <= max_chars:
+                cur += sent
+                continue
+            if cur.strip():
+                pieces.append((cur.strip(), first, last, False))
+            while len(sent) > max_chars:
+                cut = sent.rfind(" ", 0, max_chars)
+                if cut <= 0:
+                    cut = max_chars
+                pieces.append((sent[:cut].strip(), first, last, False))
+                sent = sent[cut:]
+            cur = sent
+        if cur.strip():
+            pieces.append((cur.strip(), first, last, False))
+
+    # 3. Pack pieces into parts.
+    parts: List[AudioPart] = []
+    for text, first, last, whole in pieces:
+        if parts:
+            sep = "\n\n" if whole else " "
+            cand = parts[-1].text + sep + text
+            if len(cand) <= max_chars:
+                parts[-1].text = cand
+                parts[-1].page_end = max(parts[-1].page_end, last)
+                continue
+        parts.append(AudioPart(text=text, page_start=first, page_end=last))
+    return parts
+
+
+def estimate_seconds(chars: int, rate: str = "+0%") -> float:
+    """Rough listening time for `chars` characters at an Edge-TTS rate."""
+    try:
+        factor = 1 + int(rate.strip().rstrip("%")) / 100
+    except ValueError:
+        factor = 1.0
+    return chars / (CHARS_PER_SECOND * max(factor, 0.3))
+
+
+_MP3_BITRATES = {
+    1: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+}
+_MP3_RATES = {3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000]}
+
+
+def mp3_duration(data: bytes) -> float:
+    """Exact length in seconds of MPEG Layer III audio, by walking its frames."""
+    b = memoryview(data)
+    n = len(b)
+    i = 0
+    if n >= 10 and bytes(b[:3]) == b"ID3":
+        i = 10 + ((b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9])
+    seconds = 0.0
+    while i + 4 <= n:
+        if b[i] != 0xFF or (b[i + 1] & 0xE0) != 0xE0:
+            i += 1
+            continue
+        ver = (b[i + 1] >> 3) & 3
+        layer = (b[i + 1] >> 1) & 3
+        br_idx = (b[i + 2] >> 4) & 15
+        sr_idx = (b[i + 2] >> 2) & 3
+        if ver == 1 or layer != 1 or br_idx in (0, 15) or sr_idx == 3:
+            i += 1
+            continue
+        kbps = _MP3_BITRATES[1 if ver == 3 else 2][br_idx]
+        rate = _MP3_RATES[ver][sr_idx]
+        pad = (b[i + 2] >> 1) & 1
+        length = (144 if ver == 3 else 72) * kbps * 1000 // rate + pad
+        if length <= 4:
+            i += 1
+            continue
+        seconds += (1152 if ver == 3 else 576) / rate
+        i += length
+    return seconds
+
+
+def tts_clip_edge_retry(text: str, voice: str, rate: str,
+                        attempts: int = 3,
+                        sleep: Callable[[float], None] = time.sleep) -> bytes:
+    """tts_clip_edge with retries, since the Edge service drops requests now and then."""
+    last: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return tts_clip_edge(text, voice=voice, rate=rate)
+        except Exception as e:  # noqa: BLE001 - network errors vary
+            last = e
+            if attempt < attempts - 1:
+                sleep(2 * (attempt + 1))
+    raise RuntimeError(f"Edge TTS failed after {attempts} tries: {last}")

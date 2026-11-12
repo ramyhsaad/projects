@@ -1,6 +1,6 @@
 {
-  "name": "PDF Audio Reader",
-  "short_name": "PDF Reader",
+  "name": "Text to Audio",
+  "short_name": "Text to Audio",
   "description": "Convert PDF documents to audio with edge TTS",
   "start_url": "/",
   "display": "standalone",

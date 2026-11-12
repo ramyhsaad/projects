@@ -1,6 +1,14 @@
+[server]
+enableStaticServing = true
+maxUploadSize = 200
+
+[browser]
+gatherUsageStats = false
+
 [theme]
 base = "light"
 primaryColor = "#10b981"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f8fafc"
 textColor = "#0f172a"
+font = "sans serif"
