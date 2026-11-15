@@ -243,7 +243,8 @@ def apply_pronunciations(text: str, pairs: Sequence[Tuple[str, str]]) -> str:
     """Replace whole words, ignoring case, keeping a leading capital."""
     for word, say in pairs:
         def sub(m, say=say):
-            return say[:1].upper() + say[1:] if m.group(0)[:1].isupper() else say
+            first = say[:1].upper() if m.group(0)[:1].isupper() else say[:1].lower()
+            return first + say[1:]
         text = re.sub(rf"(?<![\w'’]){re.escape(word)}(?![\w])", sub, text, flags=re.I)
     return text
 
