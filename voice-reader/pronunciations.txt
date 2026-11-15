@@ -1,0 +1,6 @@
+# How to say words the voice gets wrong.
+# One per line:  word = spelling the voice should read
+# Whole words only; capitals don't matter. Lines starting with # are ignored.
+# After editing, rerun the same command: only passages with a changed word are remade.
+
+Zat = Zaht
