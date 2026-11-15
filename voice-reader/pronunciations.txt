@@ -1,0 +1,19 @@
+# How to say words the voice gets wrong. One per line:  word = how to say it
+# Spell the right-hand side the way it sounds. Matching ignores case and only
+# replaces whole words. Edit this file, run the same command again, and only
+# the passages with these words are remade.
+
+Zat = Zaht              # "ah" sound for the a
+
+# Ask your guide to check these, then remove the leading # to turn them on:
+# Sifat = Sih-faht
+# Pir = Peer
+# Murshid = Moor-shid
+# Inayat = Ee-nah-yaht
+# Vilayat = Vee-lah-yaht
+# Nafs = Nuffs
+# Ruh = Rooh
+# Malakut = Mah-lah-koot
+# Jabarut = Jah-bah-root
+# Lahut = Lah-hoot
+# Nasut = Nah-soot

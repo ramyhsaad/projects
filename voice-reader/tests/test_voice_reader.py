@@ -33,3 +33,22 @@ def test_running_headers_and_page_numbers_dropped():
               "Patience shows the way back.", "And so the journey ends."]
     pages = [["BOOK TITLE", b, str(i)] for i, b in enumerate(bodies, 1)]
     assert vr.strip_running_lines(pages) == [[b] for b in bodies]
+
+
+def test_pronunciations_whole_words_keep_capital(tmp_path):
+    f = tmp_path / "p.txt"
+    f.write_text("# comment\nZat = Zaht   # ah sound\npir = Peer\n")
+    pairs = vr.load_pronunciations(f)
+    assert pairs == [("Zat", "Zaht"), ("pir", "Peer")]
+    out = vr.apply_pronunciations("Zat and zat, not Zatara. Pir Vilayat's pir.", pairs)
+    assert out == "Zaht and zaht, not Zatara. Peer Vilayat's peer."
+
+
+def test_lecture_breaks_from_headings_and_pages():
+    paras = [vr.Para("Intro text.", 1), vr.Para("The Coming of the Soul", 2, True),
+             vr.Para("First lecture.", 2), vr.Para("Second lecture starts here.", 5)]
+    ps = vr.make_passages(paras, break_pages=[5])
+    assert [p.break_before for p in ps] == [False, True, False, True]
+    assert vr.gap_after(ps[0], ps[1]) == vr.PAUSE_LECTURE_S
+    assert vr.gap_after(ps[1], ps[2]) == vr.PAUSE_AFTER_HEADING_S
+    assert vr.gap_after(ps[2], ps[3], 2.0) == vr.PAUSE_LECTURE_S * 2
