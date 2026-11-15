@@ -367,7 +367,8 @@ def load_model(device):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pdf")
-    ap.add_argument("voice", help="reference recording of the voice (wav, 10-30 s)")
+    ap.add_argument("voice", help="reference recording of the voice (wav, 10-30 s); "
+                    "with --samples, several can be given separated by commas")
     ap.add_argument("out", help="output .mp3 / .m4a / .wav")
     ap.add_argument("--pages", help='e.g. "2-66" or "5,9-12"')
     ap.add_argument("--chapter", help='only these chapters, numbered as --list-chapters shows, e.g. "3" or "3-4"')
@@ -388,6 +389,9 @@ def main():
     ap.add_argument("--device", default="auto", help="auto, mps, cpu or cuda")
     ap.add_argument("--dry-run", action="store_true", help="print the passages; don't make audio")
     ap.add_argument("--list-chapters", action="store_true", help="print the headings found; don't make audio")
+    ap.add_argument("--samples", nargs="?", const="", metavar="LETTERS",
+                    help="make short samples of the first lecture in several settings to choose from "
+                         "(all presets, or e.g. BDX; X = your own --expression/--pace/--speed)")
     ap.add_argument("--redo", help='remake these passages (numbers from --dry-run or the progress lines), e.g. "45,102-104"')
     ap.add_argument("--verbose", action="store_true", help="show the model's own progress bars and warnings")
     args = ap.parse_args()
@@ -433,30 +437,102 @@ def main():
     out = Path(args.out)
     parts = out.with_name(out.stem + ".parts")
     parts.mkdir(parents=True, exist_ok=True)
-    voice_id = hashlib.sha1(Path(args.voice).read_bytes()).hexdigest()[:12]
-    settings = f"{voice_id}|{args.expression}|{args.pace}|{args.temperature}"
-
-    def part_path(it):
-        h = hashlib.sha1(f"{settings}|{it['text']}".encode()).hexdigest()[:16]
-        return parts / f"{h}.wav"
-
     for i, it in enumerate(items, 1):
         it["n"] = i
+    maker = Maker(args, parts)
+
+    if args.samples is not None:
+        make_samples(items, args, maker, out)
+        return
+
+    voice = args.voice.split(",")[0]
     if args.redo:
         for i in parse_pages(args.redo, len(items)):
-            part_path(items[i - 1]).unlink(missing_ok=True)
-    todo = [it for it in items if not part_path(it).exists()]
-    print(f"{len(items)} passages; {len(items) - len(todo)} already made, {len(todo)} to make.", flush=True)
+            maker.path(items[i - 1], voice, args.expression, args.pace).unlink(missing_ok=True)
+    maker.make(items, voice, args.expression, args.pace)
+    join(items, maker, voice, args.expression, args.pace, args.speed, out)
 
-    model, sr = None, 24000
-    if todo:
-        model, device = load_model(args.device)
-        sr = model.sr
-        try:
-            model.prepare_conditionals(args.voice, exaggeration=args.expression)
-            prompt = None
-        except Exception:
-            prompt = args.voice
+
+PRESETS = {  # letter: (expression, pace, speed, note)
+    "A": (0.5, 0.5, 1.0, "Chatterbox defaults, not slowed"),
+    "B": (0.5, 0.5, 0.85, "defaults, 15% slower"),
+    "C": (0.5, 0.3, 0.9, "more deliberate delivery, a little slower"),
+    "D": (0.65, 0.3, 0.85, "deliberate and more expressive"),
+    "E": (0.4, 0.3, 0.8, "calm, deliberate and slowest"),
+}
+
+
+def sample_items(items, limit_chars=650):
+    """The opening of the first lecture: its heading and about 45 seconds of text."""
+    first = next((i for i, it in enumerate(items) if it["heading"] and it["chapter"]), 0)
+    chosen, total = [], 0
+    for it in items[first:]:
+        if total > limit_chars and not it["heading"]:
+            break
+        chosen.append(dict(it))
+        total += len(it["text"])
+    chosen[-1]["pause"] = 1.0
+    return chosen
+
+
+def make_samples(items, args, maker, out):
+    letters = (args.samples or "".join(PRESETS)).upper()
+    trials = [(k, *PRESETS[k]) for k in letters if k in PRESETS]
+    if args.samples and "X" in letters:  # X = the settings given on the command line
+        trials.append(("X", args.expression, args.pace, args.speed, "your --expression/--pace/--speed"))
+    voices = args.voice.split(",")
+    chosen = sample_items(items)
+    folder = out.with_name(out.stem + " samples")
+    folder.mkdir(exist_ok=True)
+    print(f"Making {len(trials) * len(voices)} samples of {len(chosen)} passages "
+          f"(the start of: {chosen[0]['shown'][:60]}).", flush=True)
+    made = []
+    for v in voices:
+        vname = Path(v).stem
+        for k, e, p, sp, note in trials:
+            maker.make(chosen, v, e, p, quiet=True)
+            name = f"{k} {vname} - expression {e}, pace {p}, speed {sp}{out.suffix or '.mp3'}"
+            join(chosen, maker, v, e, p, sp, folder / name, quiet=True)
+            made.append((k, vname, e, p, sp, note))
+            print(f"  made {name}", flush=True)
+    print(f"\nSamples are in: {folder}\n")
+    for k, vname, e, p, sp, note in made:
+        print(f"  {k}  {vname:<14} {note}")
+        print(f"       --expression {e} --pace {p} --speed {sp}")
+    print("\nPick one and run the book with those settings (and that voice file).\n"
+          "The sample passages are reused, so they won't be made again.")
+
+
+class Maker:
+    """Makes passage audio, saved by voice + settings + text, loading the model only if needed."""
+
+    def __init__(self, args, parts):
+        self.args, self.parts = args, parts
+        self.model = self.device = None
+        self.voice_ids, self.conds_for = {}, None
+
+    def path(self, it, voice, expression, pace):
+        if voice not in self.voice_ids:
+            self.voice_ids[voice] = hashlib.sha1(Path(voice).read_bytes()).hexdigest()[:12]
+        key = f"{self.voice_ids[voice]}|{expression}|{pace}|{self.args.temperature}|{it['text']}"
+        return self.parts / f"{hashlib.sha1(key.encode()).hexdigest()[:16]}.wav"
+
+    def make(self, items, voice, expression, pace, quiet=False):
+        todo = [it for it in items if not self.path(it, voice, expression, pace).exists()]
+        if not quiet:
+            print(f"{len(items)} passages; {len(items) - len(todo)} already made, {len(todo)} to make.", flush=True)
+        if not todo:
+            return
+        if self.model is None:
+            self.model, self.device = load_model(self.args.device)
+        model, sr = self.model, self.model.sr
+        prompt = None
+        if self.conds_for != (voice, expression):
+            try:
+                model.prepare_conditionals(voice, exaggeration=expression)
+                self.conds_for = (voice, expression)
+            except Exception:
+                prompt = voice
         made_audio = made_compute = 0.0
         start = time.time()
         for n, it in enumerate(todo, 1):
@@ -466,8 +542,8 @@ def main():
             expect = len(it["text"]) / 14
             best = None
             for attempt in range(3):
-                wav = model.generate(it["text"], audio_prompt_path=prompt, exaggeration=args.expression,
-                                     cfg_weight=args.pace, temperature=args.temperature)
+                wav = model.generate(it["text"], audio_prompt_path=prompt, exaggeration=expression,
+                                     cfg_weight=pace, temperature=self.args.temperature)
                 x = level(trim_silence(wav.squeeze(0).numpy(), sr))
                 secs = len(x) / sr
                 off = abs(secs - expect) / max(expect, 1)
@@ -480,36 +556,41 @@ def main():
                 print(f"    passage {it['n']} came out {'too long' if too_long else 'too short'} "
                       f"({secs:.0f} s for about {expect:.0f} s of text); trying again", flush=True)
             _, x, secs = best
-            write_wav(part_path(it), x, sr)
+            write_wav(self.path(it, voice, expression, pace), x, sr)
             spent = time.time() - t0
             made_audio += secs
             made_compute += spent
             per = (time.time() - start) / n
-            print(f"[{n}/{len(todo)}] passage {it['n']}, p.{it['page']}  {secs:4.1f} s of audio in {spent:4.1f} s"
-                  f"  · about {fmt_time(per * (len(todo) - n))} left", flush=True)
+            if not quiet:
+                print(f"[{n}/{len(todo)}] passage {it['n']}, p.{it['page']}  {secs:4.1f} s of audio in "
+                      f"{spent:4.1f} s  · about {fmt_time(per * (len(todo) - n))} left", flush=True)
             if n == 3 and made_compute / max(made_audio, 0.1) > 8:
                 print(f"    Slow: {made_compute / made_audio:.0f} s of work per second of audio. "
                       f"Close other apps, or stop (Ctrl-C) and rerun with --device "
-                      f"{'cpu' if device != 'cpu' else 'mps'}; finished passages are kept.", flush=True)
+                      f"{'cpu' if self.device != 'cpu' else 'mps'}; finished passages are kept.", flush=True)
 
+
+def join(items, maker, voice, expression, pace, speed, out, quiet=False):
     import numpy as np
 
-    print("Joining passages...", flush=True)
-    chunks = []
+    if not quiet:
+        print("Joining passages...", flush=True)
+    chunks, sr = [], 24000
     for it in items:
-        x, sr = read_wav(part_path(it))
+        x, sr = read_wav(maker.path(it, voice, expression, pace))
         chunks.append(x)
         # Pauses are stretched by --speed later, so shrink them here to land on the stated length.
-        chunks.append(np.zeros(int(it["pause"] * args.speed * sr), dtype="float32"))
+        chunks.append(np.zeros(int(it["pause"] * speed * sr), dtype="float32"))
+    out = Path(out)
     joined = out.with_name(out.stem + ".joined.wav")
     write_wav(joined, np.concatenate(chunks), sr)
 
-    if out.suffix.lower() == ".wav" and abs(args.speed - 1) < 1e-6:
+    if out.suffix.lower() == ".wav" and abs(speed - 1) < 1e-6:
         os.replace(joined, out)
     elif shutil.which("ffmpeg"):
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(joined)]
-        if abs(args.speed - 1) > 1e-6:
-            cmd += ["-filter:a", f"atempo={args.speed}"]
+        if abs(speed - 1) > 1e-6:
+            cmd += ["-filter:a", f"atempo={speed}"]
         if out.suffix.lower() == ".mp3":
             cmd += ["-c:a", "libmp3lame", "-b:a", "96k"]
         elif out.suffix.lower() in (".m4a", ".aac", ".mp4"):
@@ -519,8 +600,9 @@ def main():
     else:
         sys.exit(f"ffmpeg not found (brew install ffmpeg). The unslowed audio is in {joined}")
 
-    total = sum(len(c) for c in chunks) / sr / args.speed
-    print(f"Done: {out}  ({fmt_time(total)})")
+    if not quiet:
+        total = sum(len(c) for c in chunks) / sr / speed
+        print(f"Done: {out}  ({fmt_time(total)})")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,27 @@ bash read.sh "BOOK.pdf" VOICE.wav "OUT.mp3" --pages 2-66 --expression 0.6 --pace
 
 `read.sh` uses the Python environment in `~/my-voice`. Set `VOICE_ENV` to use another one.
 
+## Start with samples
+
+```
+bash read.sh "BOOK.pdf" pv_ref_E.wav "OUT.mp3" --pages 2-66 --samples
+```
+
+This makes about 45 seconds of the first lecture in five settings, in a folder
+named `OUT samples`, and prints the settings for each:
+
+| | expression | pace | speed | sounds |
+|---|---|---|---|---|
+| A | 0.5 | 0.5 | 1.0 | Chatterbox defaults, not slowed |
+| B | 0.5 | 0.5 | 0.85 | defaults, 15% slower |
+| C | 0.5 | 0.3 | 0.9 | more deliberate delivery, a little slower |
+| D | 0.65 | 0.3 | 0.85 | deliberate and more expressive |
+| E | 0.4 | 0.3 | 0.8 | calm, deliberate and slowest |
+
+- Only some: `--samples BD`. Your own mix: `--samples X --expression 0.6 --pace 0.35 --speed 0.8`.
+- Compare voice recordings: `pv_ref_E.wav,pv_ref_F.wav` (comma, no space) makes each setting in each voice.
+- Then run the book with the settings you liked. The sample passages are reused.
+
 ## Before a long run
 
 - `--list-chapters` lists the lectures/chapters it found, with page numbers.
